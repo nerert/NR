@@ -1587,9 +1587,19 @@ function mostrarOpcionesCita(c, pac) {
   delBtn.textContent = '🗑️ Eliminar cita';
   delBtn.style.cssText = 'background:#fef2f2;color:#ef4444;border:none;border-radius:12px;padding:11px;cursor:pointer;font-weight:600;font-size:.95rem';
   delBtn.onclick = () => {
-    if(confirm('¿Eliminar esta cita?')) {
+    if(confirm('¿Eliminar esta cita?' + (gcalReady && c.gcalEventId ? '\nTambién se eliminará de Google Calendar.' : ''))) {
       fbDel('citas', c.id).then(ok => {
-        if(ok) { DB.citas = DB.citas.filter(x => x.id !== c.id); renderCalendario(); toast('🗑️ Cita eliminada'); }
+        if(ok) {
+          DB.citas = DB.citas.filter(x => x.id !== c.id);
+          renderCalendario();
+          toast('🗑️ Cita eliminada');
+          // Eliminar también de Google Calendar si estaba vinculada
+          if(gcalReady && c.gcalEventId) {
+            gapi.client.calendar.events.delete({ calendarId: GCAL_CALENDAR_ID, eventId: c.gcalEventId })
+              .then(() => { toast('🗑️ Evento eliminado de Google Calendar'); gcalLoadEventsHoy(); })
+              .catch(e => console.warn('[GCal] delete event error', e));
+          }
+        }
       });
       popup.remove();
     }
@@ -1625,10 +1635,18 @@ async function guardarCita() {
   console.log('[guardarCita] hora capturada:', hora);
   if(!pacId) { toast('⚠️ Selecciona paciente'); return; }
   if(!fecha) { toast('⚠️ Selecciona fecha'); return; }
+  // Capturar gcalEventId si viene de una importación desde GCal
+  const fechaEl = document.getElementById('cita-fecha');
+  const gcalImportId = fechaEl?.dataset?.gcalImportId || null;
+  if(gcalImportId && fechaEl) delete fechaEl.dataset.gcalImportId;
   const data = { pacienteId:pacId, fecha, hora, motivo, notas };
+  if(gcalImportId) data.gcalEventId = gcalImportId;
   toast('⏳ Guardando...');
   if(citaEditId) {
     const editIdSnap = citaEditId;
+    // Preservar gcalEventId existente para no romper el vínculo con GCal
+    const existingCita = DB.citas.find(x => x.id === editIdSnap);
+    if(existingCita?.gcalEventId) data.gcalEventId = existingCita.gcalEventId;
     const ok = await fbSave('citas', editIdSnap, data);
     if(ok) {
       // Update local state directly with new data
@@ -1640,14 +1658,17 @@ async function guardarCita() {
       renderCalendario();
       renderDashboard();
       toast('✅ Cita actualizada');
-      if(document.getElementById('cita-gcal-sync')?.checked) gcalSyncCita({ id: editIdSnap, ...data });
+      // Sincronizar si ya estaba vinculada a GCal O si el checkbox está marcado
+      if(gcalReady && (data.gcalEventId || document.getElementById('cita-gcal-sync')?.checked)) {
+        gcalSyncCita({ id: editIdSnap, ...data });
+      }
     } else toast('❌ Error al guardar');
   } else {
     const id = await fbAdd('citas', data);
     if(id) {
       data.id=id; DB.citas.push(data);
       closeModal('modal-cita'); renderCalendario(); renderDashboard(); toast('✅ Cita agendada');
-      if(document.getElementById('cita-gcal-sync')?.checked) gcalSyncCita(data);
+      if(gcalReady && document.getElementById('cita-gcal-sync')?.checked) gcalSyncCita(data);
     } else toast('❌ Error al guardar');
   }
 }
@@ -3032,21 +3053,28 @@ async function gcalLoadEventsHoy() {
     const resp = await gapi.client.calendar.events.list({
       calendarId: GCAL_CALENDAR_ID,
       timeMin: inicio, timeMax: fin,
-      singleEvents: true, orderBy: 'startTime', maxResults: 20
+      singleEvents: true, orderBy: 'startTime', maxResults: 50
     });
     const items = resp.result.items || [];
     const card  = document.getElementById('gcal-hoy-card');
     const cont  = document.getElementById('gcal-eventos-hoy');
     card.style.display = '';
+    // IDs de GCal ya vinculados a citas en la app
+    const vinculados = new Set(DB.citas.map(c => c.gcalEventId).filter(Boolean));
     if(items.length === 0) {
       cont.innerHTML = '<p style="color:var(--ink2);font-size:.9rem;margin:0">Sin eventos en Google Calendar para hoy.</p>';
     } else {
       cont.innerHTML = items.map(ev => {
         const start = ev.start.dateTime ? new Date(ev.start.dateTime).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) : 'Todo el día';
         const end   = ev.end.dateTime   ? new Date(ev.end.dateTime).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) : '';
-        return `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+        const yaEnApp = vinculados.has(ev.id);
+        const importBtn = yaEnApp
+          ? `<span style="font-size:.75rem;color:#16a34a;font-weight:600">✅ En app</span>`
+          : `<button onclick='gcalImportarEvento(${JSON.stringify(ev)})' style="background:#6d28d9;color:#fff;border:none;border-radius:8px;padding:4px 10px;font-size:.78rem;cursor:pointer;font-weight:600">📥 Importar</button>`;
+        return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
           <div style="background:#6d28d9;color:#fff;border-radius:8px;padding:4px 8px;font-size:.78rem;font-weight:700;white-space:nowrap;min-width:54px;text-align:center">${start}${end ? '<br>'+end : ''}</div>
-          <div><div style="font-weight:600;font-size:.9rem">${ev.summary||'Sin título'}</div>${ev.description?'<div style="font-size:.8rem;color:var(--ink2)">'+ev.description+'</div>':''}</div>
+          <div style="flex:1"><div style="font-weight:600;font-size:.9rem">${ev.summary||'Sin título'}</div>${ev.description?'<div style="font-size:.8rem;color:var(--ink2)">'+ev.description+'</div>':''}</div>
+          <div style="flex-shrink:0">${importBtn}</div>
         </div>`;
       }).join('');
     }
@@ -3057,27 +3085,60 @@ async function gcalLoadEventsHoy() {
   }
 }
 
+// Importar evento de Google Calendar → nueva cita en la app
+function gcalImportarEvento(ev) {
+  const dt = ev.start?.dateTime || ev.start?.date || '';
+  const fecha = dt ? dt.slice(0, 10) : new Date().toISOString().slice(0, 10);
+  const hora  = ev.start?.dateTime ? new Date(ev.start.dateTime).toTimeString().slice(0, 5) : '';
+  // Pre-llenar el modal de nueva cita
+  openModal('modal-cita');
+  document.querySelector('#modal-cita .modal-header h3').textContent = 'Importar desde Google Calendar';
+  document.getElementById('cita-fecha').value  = fecha;
+  document.getElementById('cita-hora').value   = hora;
+  document.getElementById('cita-motivo').value = ev.summary || '';
+  const notasEl = document.getElementById('cita-notas');
+  if(notasEl) notasEl.value = ev.description || '';
+  // Guardar el gcalEventId para vincularlo al crear la cita
+  document.getElementById('cita-fecha').dataset.gcalImportId = ev.id;
+  toast('📅 Selecciona el paciente y guarda para importar');
+}
+
 async function gcalSyncCita(cita) {
-  if(!gcalReady) { toast('⚠️ Conecta Google Calendar primero'); return; }
+  if(!gcalReady) return;
   const pac = DB.pacientes.find(p => p.id === cita.pacienteId);
   const nombre = pac ? pac.nombre + ' ' + pac.apellido : 'Paciente';
   const [y, m, d] = (cita.fecha || '').split('-');
   const [hh, mm] = (cita.hora || '00:00').split(':');
   if(!y || !m || !d) { toast('⚠️ La cita no tiene fecha válida'); return; }
   const startDT = new Date(+y, +m-1, +d, +hh, +mm);
-  const endDT   = new Date(startDT.getTime() + 60 * 60 * 1000); // +1h
+  const endDT   = new Date(startDT.getTime() + 60 * 60 * 1000);
+  const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const event = {
     summary: `Cita dental: ${nombre}`,
     description: [cita.motivo, cita.notas].filter(Boolean).join('\n'),
-    start: { dateTime: startDT.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-    end:   { dateTime: endDT.toISOString(),   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    start: { dateTime: startDT.toISOString(), timeZone: tz },
+    end:   { dateTime: endDT.toISOString(),   timeZone: tz },
     reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 60 }] }
   };
-  gcalSetStatus('Sincronizando cita a Google Calendar…', 'loading');
+  gcalSetStatus('Sincronizando con Google Calendar…', 'loading');
   try {
-    await gapi.client.calendar.events.insert({ calendarId: GCAL_CALENDAR_ID, resource: event });
-    gcalSetStatus('Cita sincronizada a Google Calendar', 'ok');
-    toast('📅 Cita enviada a Google Calendar');
+    if(cita.gcalEventId) {
+      // Actualizar evento existente
+      await gapi.client.calendar.events.patch({
+        calendarId: GCAL_CALENDAR_ID, eventId: cita.gcalEventId, resource: event
+      });
+      gcalSetStatus('Cita actualizada en Google Calendar', 'ok');
+      toast('📅 Cita actualizada en Google Calendar');
+    } else {
+      // Crear evento nuevo y guardar su ID de vuelta en Firebase
+      const resp = await gapi.client.calendar.events.insert({ calendarId: GCAL_CALENDAR_ID, resource: event });
+      const gcalEventId = resp.result.id;
+      await fbSave('citas', cita.id, { gcalEventId }); // merge:true → solo actualiza este campo
+      const idx = DB.citas.findIndex(x => x.id === cita.id);
+      if(idx >= 0) DB.citas[idx].gcalEventId = gcalEventId;
+      gcalSetStatus('Cita enviada a Google Calendar', 'ok');
+      toast('📅 Cita enviada a Google Calendar');
+    }
     gcalLoadEventsHoy();
   } catch(e) {
     console.error('[GCal] sync cita', e);
@@ -3090,10 +3151,11 @@ async function gcalSyncAhora() {
   if(!gcalReady) { toast('⚠️ Conecta Google Calendar primero'); return; }
   const hoy = new Date().toISOString().slice(0, 10);
   const citasHoy = DB.citas.filter(c => c.fecha === hoy);
-  if(citasHoy.length === 0) { toast('ℹ️ No hay citas para hoy que sincronizar'); gcalLoadEventsHoy(); return; }
-  gcalSetStatus(`Sincronizando ${citasHoy.length} cita${citasHoy.length!==1?'s':''} de hoy…`, 'loading');
+  gcalSetStatus('Sincronizando…', 'loading');
   let ok = 0, fail = 0;
+  // App → GCal: sincronizar citas sin gcalEventId
   for(const c of citasHoy) {
+    if(c.gcalEventId) continue; // ya vinculada, se actualiza al editar
     const pac = DB.pacientes.find(p => p.id === c.pacienteId);
     const nombre = pac ? pac.nombre + ' ' + pac.apellido : 'Paciente';
     const [y, m, d] = (c.fecha || '').split('-');
@@ -3101,21 +3163,27 @@ async function gcalSyncAhora() {
     if(!y) { fail++; continue; }
     const startDT = new Date(+y, +m-1, +d, +hh, +mm);
     const endDT   = new Date(startDT.getTime() + 60 * 60 * 1000);
+    const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
     const event = {
       summary: `Cita dental: ${nombre}`,
       description: [c.motivo, c.notas].filter(Boolean).join('\n'),
-      start: { dateTime: startDT.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
-      end:   { dateTime: endDT.toISOString(),   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+      start: { dateTime: startDT.toISOString(), timeZone: tz },
+      end:   { dateTime: endDT.toISOString(),   timeZone: tz },
       reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 60 }] }
     };
     try {
-      await gapi.client.calendar.events.insert({ calendarId: GCAL_CALENDAR_ID, resource: event });
+      const resp = await gapi.client.calendar.events.insert({ calendarId: GCAL_CALENDAR_ID, resource: event });
+      const gcalEventId = resp.result.id;
+      await fbSave('citas', c.id, { gcalEventId });
+      const idx = DB.citas.findIndex(x => x.id === c.id);
+      if(idx >= 0) DB.citas[idx].gcalEventId = gcalEventId;
       ok++;
     } catch(e) { console.error('[GCal] sync', e); fail++; }
   }
-  const msg = ok > 0 ? `${ok} cita${ok!==1?'s':''} sincronizada${ok!==1?'s':''}${fail>0?' ('+fail+' error'+(fail!==1?'es':'')+')':''}` : `Error al sincronizar (${fail} fallo${fail!==1?'s':''})`;
-  gcalSetStatus(msg, ok>0?'ok':'error');
-  toast(ok>0 ? `📅 ${msg}` : `❌ ${msg}`);
+  const msg = `${ok} enviada${ok!==1?'s':''}${fail>0?' · '+fail+' error':''}`;
+  gcalSetStatus(msg, fail>0&&ok===0?'error':'ok');
+  if(ok > 0) toast(`📅 ${msg} a Google Calendar`);
+  // GCal → App: cargar eventos del día (incluye botón Importar para los no vinculados)
   gcalLoadEventsHoy();
 }
 
