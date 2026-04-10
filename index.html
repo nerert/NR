@@ -411,24 +411,34 @@ th{font-weight:700;color:var(--ink2);font-size:0.78rem;text-transform:uppercase;
   </div>
 </div>
 
-<!-- FOTOS -->
+<!-- FOTOS / ARCHIVOS DRIVE -->
 <div class="page" id="page-fotos" style="position:relative">
-  <div id="fotos-overlay" class="overlay-block"><span style="font-size:2rem">📷</span><p>Selecciona un paciente para ver sus fotos</p></div>
+  <div id="fotos-overlay" class="overlay-block"><span style="font-size:2rem">📁</span><p>Selecciona un paciente para ver sus archivos</p></div>
   <div class="page-header">
-    <div><h2>Fotos</h2><p id="fotos-paciente-label">Selecciona un paciente</p></div>
-    <label class="btn btn-primary" style="cursor:pointer" id="btn-agregar-foto">
-      📷 Agregar foto
-      <input type="file" accept="image/*" multiple style="display:none" onchange="agregarFotos(this)">
-    </label>
+    <div><h2>Archivos</h2><p id="fotos-paciente-label">Selecciona un paciente</p></div>
   </div>
   <div class="card" style="margin-bottom:16px">
     <label style="font-size:.78rem;font-weight:600;color:var(--ink2);text-transform:uppercase;letter-spacing:.5px">Paciente</label>
     <select id="select-paciente-fotos" onchange="setPacienteActivo(this.value)" style="width:100%;margin-top:4px;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.9rem"></select>
   </div>
-  <div id="fotos-uploading" style="display:none;text-align:center;padding:20px;color:var(--accent)">
-    ⏳ Subiendo fotos a la nube...
+  <!-- Subtabs + upload -->
+  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px">
+    <button id="tab-btn-fotos" class="btn btn-primary" style="font-size:.85rem;padding:7px 14px" onclick="switchArchivoTab('fotos')">📷 Fotos</button>
+    <button id="tab-btn-radiografias" class="btn btn-secondary" style="font-size:.85rem;padding:7px 14px" onclick="switchArchivoTab('radiografias')">🔬 Radiografías</button>
+    <button id="tab-btn-documentos" class="btn btn-secondary" style="font-size:.85rem;padding:7px 14px" onclick="switchArchivoTab('documentos')">📄 Documentos</button>
+    <label class="btn btn-secondary" id="btn-drive-upload" style="cursor:pointer;font-size:.85rem;padding:7px 14px;margin-left:auto">
+      ⬆️ Subir
+      <input type="file" id="drive-upload-input" multiple style="display:none" onchange="driveAgregarArchivos(this)">
+    </label>
   </div>
+  <!-- Estado de subida -->
+  <div id="drive-upload-status" style="display:none;text-align:center;padding:16px;color:var(--accent);background:var(--surface);border-radius:12px;margin-bottom:12px;font-weight:600"></div>
+  <!-- Grid Drive -->
+  <div id="archivos-grid"></div>
+  <!-- Grid Cloudinary (fotos antiguas — solo visible en subtab Fotos) -->
   <div class="fotos-grid" id="fotos-grid"></div>
+  <!-- Compat: fotos-uploading usado por agregarFotos() legacy -->
+  <div id="fotos-uploading" style="display:none"></div>
 </div>
 
 <!-- PAGOS -->
@@ -1628,37 +1638,81 @@ async function guardarCita() {
   }
 }
 
-// ── FOTOS (Cloudinary) ─────────────────────────────────────────────────────
+// ── FOTOS / ARCHIVOS DRIVE ────────────────────────────────────────────────
 const CLOUDINARY_CLOUD = 'drpfwzgam';
 const CLOUDINARY_PRESET = 'kndental';
 
+let currentArchivoTab = 'fotos';
+const _driveFolderCache = {};
+
+function switchArchivoTab(tab) {
+  currentArchivoTab = tab;
+  ['fotos','radiografias','documentos'].forEach(t => {
+    const btn = document.getElementById(`tab-btn-${t}`);
+    if(btn) btn.className = t === tab ? 'btn btn-primary' : 'btn btn-secondary';
+  });
+  const inp = document.getElementById('drive-upload-input');
+  if(inp) inp.accept = tab === 'radiografias' ? 'image/*,.pdf,.dcm' : tab === 'documentos' ? '*/*' : 'image/*';
+  cargarFotos();
+}
+
 function cargarFotos() {
   const pacId = document.getElementById('select-paciente-fotos')?.value || pacienteActivo;
-  const grid = document.getElementById('fotos-grid'); if(!grid) return;
   if(!pacId) return;
-  // Load from Firebase (stored as array of {url, publicId})
-  db.collection('fotos').doc(pacId).get().then(doc => {
-    const fotos = doc.exists ? (doc.data().lista || []) : [];
-    DB.fotos[pacId] = fotos;
-    grid.innerHTML = fotos.length
-      ? fotos.map((f,i) => `
-        <div class="foto-item" style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:1;background:#f3f4f6">
-          <img src="${f.url}" loading="lazy" style="width:100%;height:100%;object-fit:cover;image-orientation:from-image;cursor:pointer" onclick="verFoto('${f.url}')">
-          <button class="foto-del" onclick="borrarFoto('${pacId}','${f.publicId}',${i})" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,.5);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:.8rem">🗑️</button>
-        </div>`).join('')
-      : '<p style="color:var(--ink2);grid-column:1/-1;padding:20px 0">Sin fotos para este paciente</p>';
-  }).catch(() => {
-    grid.innerHTML = '<p style="color:var(--ink2);grid-column:1/-1">Error al cargar fotos</p>';
-  });
+  const archivosGrid = document.getElementById('archivos-grid');
+  const fotosGrid    = document.getElementById('fotos-grid');
+
+  // Mostrar/ocultar fotos Cloudinary según subtab
+  if(fotosGrid) fotosGrid.style.display = currentArchivoTab === 'fotos' ? '' : 'none';
+
+  // ── Archivos Drive ──────────────────────────────────────────────────────
+  if(archivosGrid) {
+    db.collection('archivos').doc(pacId).get().then(doc => {
+      const arData = doc.exists ? doc.data() : {};
+      const lista  = arData[currentArchivoTab] || [];
+      const iconos = { fotos:'🖼️', radiografias:'🔬', documentos:'📄' };
+      const icono  = iconos[currentArchivoTab] || '📁';
+      archivosGrid.innerHTML = lista.length
+        ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px">`
+          + lista.map((f,i) => {
+            const esImagen = /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(f.name);
+            const thumb    = esImagen ? `<img src="https://drive.google.com/thumbnail?id=${f.driveId}&sz=w300" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px 8px 0 0;display:block">` : `<div style="width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:3rem">${icono}</div>`;
+            return `<div style="position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1.5px solid var(--border)">
+              <a href="${f.url}" target="_blank" title="${f.name}" style="text-decoration:none;display:block">${thumb}
+                <p style="font-size:.72rem;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:6px 8px">${f.name}</p>
+              </a>
+              <button onclick="borrarArchivoDrive('${pacId}','${f.driveId}','${currentArchivoTab}',${i})" title="Eliminar" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">🗑️</button>
+            </div>`;
+          }).join('') + '</div>'
+        : `<p style="color:var(--ink2);padding:8px 0">Sin ${currentArchivoTab} en Drive para este paciente.</p>`;
+    }).catch(() => {
+      if(archivosGrid) archivosGrid.innerHTML = '<p style="color:var(--ink2)">Error al cargar archivos</p>';
+    });
+  }
+
+  // ── Fotos Cloudinary (solo en subtab Fotos) ─────────────────────────────
+  if(currentArchivoTab === 'fotos' && fotosGrid) {
+    db.collection('fotos').doc(pacId).get().then(doc => {
+      const fotos = doc.exists ? (doc.data().lista || []) : [];
+      DB.fotos[pacId] = fotos;
+      fotosGrid.innerHTML = fotos.length
+        ? fotos.map((f,i) => `
+          <div class="foto-item" style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:1;background:#f3f4f6">
+            <img src="${f.url}" loading="lazy" style="width:100%;height:100%;object-fit:cover;image-orientation:from-image;cursor:pointer" onclick="verFoto('${f.url}')">
+            <button class="foto-del" onclick="borrarFoto('${pacId}','${f.publicId}',${i})" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,.5);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:.8rem">🗑️</button>
+          </div>`).join('')
+        : '';
+    }).catch(() => {});
+  }
 }
 
 async function agregarFotos(input) {
+  // Legacy Cloudinary upload — kept for backwards compatibility
   const pacId = document.getElementById('select-paciente-fotos')?.value || pacienteActivo;
   if(!pacId) { toast('⚠️ Selecciona un paciente'); return; }
   const files = Array.from(input.files);
   if(!files.length) return;
   document.getElementById('fotos-uploading').style.display = 'block';
-  document.getElementById('fotos-grid').style.opacity = '0.4';
   let subidas = 0;
   for(const file of files) {
     try {
@@ -1669,7 +1723,6 @@ async function agregarFotos(input) {
       const res = await fetch(`https://api.cloudinary.com/v1_1/${CLOUDINARY_CLOUD}/image/upload`, { method:'POST', body: formData });
       const data = await res.json();
       if(data.secure_url) {
-        // Save URL to Firebase
         const docRef = db.collection('fotos').doc(pacId);
         const existing = await docRef.get();
         const lista = existing.exists ? (existing.data().lista || []) : [];
@@ -1680,10 +1733,117 @@ async function agregarFotos(input) {
     } catch(e) { console.error('Upload error:', e); }
   }
   document.getElementById('fotos-uploading').style.display = 'none';
-  document.getElementById('fotos-grid').style.opacity = '1';
   input.value = '';
   cargarFotos();
-  toast(`✅ ${subidas} foto(s) guardada(s) en la nube`);
+  toast(`✅ ${subidas} foto(s) guardada(s)`);
+}
+
+// ── Google Drive upload ────────────────────────────────────────────────────
+const DRIVE_API = '/.netlify/functions/gcal';
+
+async function driveEnsurePacienteFolder(pacId) {
+  if(_driveFolderCache[pacId]) return _driveFolderCache[pacId];
+  const pac = DB.pacientes.find(p => p.id === pacId);
+  if(!pac) throw new Error('Paciente no encontrado');
+  const nombre = `${pac.nombre} ${pac.apellido}`.trim();
+  const resp = await fetch(`${DRIVE_API}?action=drive-ensure-folder`, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ pacienteNombre: nombre })
+  });
+  const data = await resp.json();
+  if(data.error) throw new Error(data.error);
+  _driveFolderCache[pacId] = data;
+  return data;
+}
+
+async function driveGetToken() {
+  const resp = await fetch(`${DRIVE_API}?action=drive-token`);
+  const data = await resp.json();
+  if(data.error) throw new Error(data.error);
+  return data.accessToken;
+}
+
+async function driveUploadFile(file, folderId, accessToken) {
+  const metadata = { name: file.name, parents: [folderId] };
+  const form = new FormData();
+  form.append('metadata', new Blob([JSON.stringify(metadata)], { type: 'application/json' }));
+  form.append('file', file);
+  const resp = await fetch(
+    'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name',
+    { method: 'POST', headers: { Authorization: `Bearer ${accessToken}` }, body: form }
+  );
+  const data = await resp.json();
+  if(data.error) throw new Error(data.error.message || JSON.stringify(data.error));
+  return data;
+}
+
+async function driveMakePublic(fileId, accessToken) {
+  await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}/permissions`, {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${accessToken}`, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ type: 'anyone', role: 'reader' })
+  });
+}
+
+async function driveAgregarArchivos(input) {
+  const pacId = document.getElementById('select-paciente-fotos')?.value || pacienteActivo;
+  if(!pacId) { toast('⚠️ Selecciona un paciente'); return; }
+  if(!gcalReady) { toast('⚠️ Conecta Google para subir archivos a Drive'); return; }
+  const files = Array.from(input.files);
+  if(!files.length) return;
+  const statusEl = document.getElementById('drive-upload-status');
+  statusEl.style.display = 'block';
+  statusEl.textContent = '⏳ Preparando carpetas en Drive...';
+  try {
+    const folders     = await driveEnsurePacienteFolder(pacId);
+    const folderId    = folders[currentArchivoTab];
+    const accessToken = await driveGetToken();
+    let subidos = 0;
+    for(const file of files) {
+      statusEl.textContent = `⏳ Subiendo ${file.name}…`;
+      const uploaded = await driveUploadFile(file, folderId, accessToken);
+      await driveMakePublic(uploaded.id, accessToken);
+      const viewUrl = `https://drive.google.com/file/d/${uploaded.id}/view`;
+      // Guardar link en Firebase (colección "archivos")
+      const docRef   = db.collection('archivos').doc(pacId);
+      const existing = await docRef.get();
+      const arData   = existing.exists ? existing.data() : {};
+      const lista    = arData[currentArchivoTab] || [];
+      lista.push({ url: viewUrl, name: file.name, driveId: uploaded.id,
+                   mimeType: file.type, subido: Date.now() });
+      arData[currentArchivoTab] = lista;
+      await docRef.set(arData);
+      subidos++;
+    }
+    statusEl.style.display = 'none';
+    input.value = '';
+    cargarFotos();
+    toast(`✅ ${subidos} archivo(s) guardado(s) en Drive`);
+  } catch(e) {
+    statusEl.style.display = 'none';
+    input.value = '';
+    toast('❌ Error: ' + e.message);
+    console.error('[Drive upload]', e);
+  }
+}
+
+async function borrarArchivoDrive(pacId, driveId, tipo, idx) {
+  if(!confirm('¿Eliminar este archivo de Drive y Firebase?')) return;
+  try {
+    if(driveId && gcalReady) {
+      await fetch(`${DRIVE_API}?action=drive-delete&fileId=${driveId}`, { method: 'DELETE' });
+    }
+    const docRef   = db.collection('archivos').doc(pacId);
+    const existing = await docRef.get();
+    if(existing.exists) {
+      const arData = existing.data();
+      arData[tipo] = (arData[tipo] || []).filter((_,i) => i !== idx);
+      await docRef.set(arData);
+    }
+    cargarFotos();
+    toast('🗑️ Archivo eliminado');
+  } catch(e) { toast('❌ Error al eliminar: ' + e.message); }
 }
 
 async function borrarFoto(pacId, publicId, idx) {

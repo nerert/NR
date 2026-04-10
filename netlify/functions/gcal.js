@@ -1,7 +1,8 @@
 // netlify/functions/gcal.js
-// Mini-backend para integración Google Calendar
+// Mini-backend para integración Google Calendar + Google Drive
 // Variables de entorno requeridas en Netlify:
 //   GCAL_CLIENT_ID, GCAL_CLIENT_SECRET, GCAL_REDIRECT_URI, GCAL_APP_URL
+//   NETLIFY_SITE_ID, NETLIFY_TOKEN  (para Netlify Blobs en sites sin CI/CD)
 
 const { getStore } = require('@netlify/blobs');
 const fs   = require('fs');
@@ -11,14 +12,19 @@ const CLIENT_ID     = process.env.GCAL_CLIENT_ID;
 const CLIENT_SECRET = process.env.GCAL_CLIENT_SECRET;
 const APP_URL       = process.env.GCAL_APP_URL || 'https://kn-dental.netlify.app';
 // GCAL_REDIRECT_URI es opcional: si no se define, se calcula desde APP_URL.
-// Esto garantiza que en producción siempre apunte al sitio correcto aunque
-// la variable no esté configurada en el dashboard de Netlify.
 const REDIRECT_URI  = process.env.GCAL_REDIRECT_URI ||
   `${APP_URL}/.netlify/functions/gcal?action=callback`;
 const CALENDAR_ID   = 'primary';
 
 const GOOGLE_TOKEN_URL    = 'https://oauth2.googleapis.com/token';
 const GOOGLE_CALENDAR_URL = 'https://www.googleapis.com/calendar/v3';
+const GOOGLE_DRIVE_URL    = 'https://www.googleapis.com/drive/v3';
+
+// Scopes: Calendar + Drive (drive.file = solo archivos creados por esta app)
+const OAUTH_SCOPES = [
+  'https://www.googleapis.com/auth/calendar.events',
+  'https://www.googleapis.com/auth/drive.file',
+].join(' ');
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -27,7 +33,6 @@ const CORS = {
 };
 
 // ── Token storage: archivo local en dev, Netlify Blobs en producción ───────
-// NETLIFY=true o AWS_LAMBDA_FUNCTION_NAME indica entorno de producción/función
 const IS_LOCAL    = !process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCTION_NAME;
 const TOKENS_FILE = path.join(__dirname, '../../.gcal-tokens.json');
 
@@ -107,6 +112,44 @@ async function calFetch(urlPath, accessToken, options = {}) {
   return data;
 }
 
+// ── Drive API helpers ──────────────────────────────────────────────────────
+async function driveFetch(urlPath, accessToken, options = {}) {
+  const resp = await fetch(`${GOOGLE_DRIVE_URL}${urlPath}`, {
+    ...options,
+    headers: {
+      Authorization: `Bearer ${accessToken}`,
+      ...(options.headers || {})
+    }
+  });
+  if(resp.status === 204) return { ok: true };
+  const text = await resp.text();
+  let data;
+  try { data = JSON.parse(text); } catch(e) { data = { error: { message: text } }; }
+  if(!resp.ok) throw new Error(data?.error?.message || text || 'Error Google Drive API');
+  return data;
+}
+
+// Busca una carpeta por nombre (y padre opcional); la crea si no existe.
+async function driveEnsureFolder(name, parentId, accessToken) {
+  const escaped = name.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+  let q = `name='${escaped}' and mimeType='application/vnd.google-apps.folder' and trashed=false`;
+  if(parentId) q += ` and '${parentId}' in parents`;
+  const list = await driveFetch(
+    `/files?q=${encodeURIComponent(q)}&fields=files(id)&spaces=drive`,
+    accessToken
+  );
+  if(list.files?.length) return list.files[0].id;
+
+  const body = { name, mimeType: 'application/vnd.google-apps.folder' };
+  if(parentId) body.parents = [parentId];
+  const folder = await driveFetch('/files?fields=id', accessToken, {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+  return folder.id;
+}
+
 // ── Main handler ───────────────────────────────────────────────────────────
 exports.handler = async (event) => {
   if(event.httpMethod === 'OPTIONS') return { statusCode: 204, headers: CORS, body: '' };
@@ -116,13 +159,13 @@ exports.handler = async (event) => {
   const err = (msg, code=500) => ({ statusCode: code, headers: CORS, body: JSON.stringify({ error: msg }) });
 
   try {
-    // 1. Generar URL OAuth
+    // 1. Generar URL OAuth (Calendar + Drive)
     if(action === 'auth-url') {
       const url = new URL('https://accounts.google.com/o/oauth2/v2/auth');
       url.searchParams.set('client_id',     CLIENT_ID);
       url.searchParams.set('redirect_uri',  REDIRECT_URI);
       url.searchParams.set('response_type', 'code');
-      url.searchParams.set('scope',         'https://www.googleapis.com/auth/calendar.events');
+      url.searchParams.set('scope',         OAUTH_SCOPES);
       url.searchParams.set('access_type',   'offline');
       url.searchParams.set('prompt',        'consent');
       return ok({ url: url.toString() });
@@ -172,7 +215,7 @@ exports.handler = async (event) => {
 
     // — Requiere autenticación —
     const accessToken = await getValidAccessToken();
-    if(!accessToken) return err('No conectado a Google Calendar.', 401);
+    if(!accessToken) return err('No conectado a Google.', 401);
 
     // 5. Listar eventos del día
     if(action === 'events' && event.httpMethod === 'GET') {
@@ -215,6 +258,38 @@ exports.handler = async (event) => {
         `/calendars/${encodeURIComponent(CALENDAR_ID)}/events/${eventId}`,
         accessToken, { method: 'DELETE' }
       );
+      return ok({ ok: true });
+    }
+
+    // ── Drive ──────────────────────────────────────────────────────────────
+
+    // 9. Token para uploads cliente-a-Drive
+    if(action === 'drive-token' && event.httpMethod === 'GET') {
+      return ok({ accessToken });
+    }
+
+    // 10. Crear/obtener estructura de carpetas del paciente
+    //     Body: { pacienteNombre: string }
+    //     Retorna: { fotos, radiografias, documentos }  (IDs de carpetas Drive)
+    if(action === 'drive-ensure-folder' && event.httpMethod === 'POST') {
+      const { pacienteNombre } = JSON.parse(event.body || '{}');
+      if(!pacienteNombre) return err('pacienteNombre requerido', 400);
+
+      const rootId  = await driveEnsureFolder('KN Dental', null, accessToken);
+      const pacId   = await driveEnsureFolder(pacienteNombre, rootId, accessToken);
+      const [fotosId, radiosId, docsId] = await Promise.all([
+        driveEnsureFolder('fotos',         pacId, accessToken),
+        driveEnsureFolder('radiografias',  pacId, accessToken),
+        driveEnsureFolder('documentos',    pacId, accessToken),
+      ]);
+      return ok({ fotos: fotosId, radiografias: radiosId, documentos: docsId });
+    }
+
+    // 11. Eliminar archivo de Drive
+    if(action === 'drive-delete' && event.httpMethod === 'DELETE') {
+      const fileId = event.queryStringParameters?.fileId;
+      if(!fileId) return err('fileId requerido', 400);
+      await driveFetch(`/files/${fileId}`, accessToken, { method: 'DELETE' });
       return ok({ ok: true });
     }
 
