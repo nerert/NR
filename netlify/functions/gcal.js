@@ -304,6 +304,37 @@ exports.handler = async (event) => {
       return ok({ ok: true });
     }
 
+    // 12. Proxy de imagen Drive → base64 (para PDF export sin CORS)
+    //     El thumbnail reduce el tamaño y es suficiente para impresión.
+    if(action === 'drive-image' && event.httpMethod === 'GET') {
+      const fileId = event.queryStringParameters?.fileId;
+      if(!fileId) return err('fileId requerido', 400);
+
+      // Obtener thumbnailLink (URL firmada, no requiere auth adicional)
+      const meta = await driveFetch(
+        `/files/${fileId}?fields=mimeType,thumbnailLink`,
+        accessToken
+      );
+
+      let imgBuffer;
+      if(meta.thumbnailLink) {
+        // Aumentar resolución del thumbnail para mejor calidad en PDF
+        const thumbUrl = meta.thumbnailLink.replace(/=s\d+$/, '=s800');
+        const r = await fetch(thumbUrl, { headers: { Authorization: `Bearer ${accessToken}` } });
+        imgBuffer = await r.arrayBuffer();
+      } else {
+        // Fallback: descarga directa del archivo
+        const r = await fetch(`${GOOGLE_DRIVE_URL}/files/${fileId}?alt=media`, {
+          headers: { Authorization: `Bearer ${accessToken}` }
+        });
+        imgBuffer = await r.arrayBuffer();
+      }
+
+      const base64   = Buffer.from(imgBuffer).toString('base64');
+      const mimeType = meta.mimeType || 'image/jpeg';
+      return ok({ base64, mimeType });
+    }
+
     return err('Acción no reconocida', 400);
 
   } catch(e) {

@@ -2762,43 +2762,60 @@ async function exportarExpediente(pacId) {
   }
 
   if(incFotos) try {
+    // ── Fotos Cloudinary (legacy) ──────────────────────────────────────────
     const fotoDoc = await db.collection('fotos').doc(pacId).get();
-    const fotos = fotoDoc.exists ? (fotoDoc.data().lista || []) : [];
-    if(fotos.length) {
-      doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(109,40,217);
-      // Load each image and add to PDF in a 2-column grid
+    const fotosCloud = fotoDoc.exists ? (fotoDoc.data().lista || []) : [];
+    // ── Fotos Drive (nuevas) ───────────────────────────────────────────────
+    const archDoc   = await db.collection('archivos').doc(pacId).get();
+    const fotosDrive = archDoc.exists ? (archDoc.data().fotos || []) : [];
+
+    const totalFotos = fotosCloud.length + fotosDrive.length;
+    if(totalFotos) {
       const imgW = 85; const imgH = 65; const cols = 2; const marginX = 14; const gap = 10;
-      let col = 0;
-      let fotosHeader = false;
-      for(const f of fotos) {
+      let col = 0; let fotosHeader = false;
+
+      // Helper: añade imagen al PDF y avanza posición
+      const addImgPDF = (dataUrl, fmt) => {
+        if(!fotosHeader) {
+          doc.addPage(); y = pdfHeader(doc, 'Fotografias Clinicas', pac);
+          doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(109,40,217);
+          doc.text('Fotografias Clinicas', 14, y); y += 10; doc.setTextColor(30,30,30);
+          fotosHeader = true;
+        }
+        if(y + imgH > 255) { doc.addPage(); y = 20; col = 0; }
+        doc.addImage(dataUrl, fmt, marginX + col*(imgW+gap), y, imgW, imgH);
+        col++; if(col >= cols) { col = 0; y += imgH + gap; }
+      };
+
+      // Cloudinary: fetch directo (sin CORS issues en estos CDN URLs)
+      for(const f of fotosCloud) {
         try {
           const res = await fetch(f.url);
           const blob = await res.blob();
-          // Use canvas to respect EXIF orientation
           const correctedB64 = await new Promise(resolve => {
             const img = new Image();
             img.onload = () => {
               const canvas = document.createElement('canvas');
-              canvas.width = img.naturalWidth;
-              canvas.height = img.naturalHeight;
-              const ctx = canvas.getContext('2d');
-              ctx.drawImage(img, 0, 0);
+              canvas.width = img.naturalWidth; canvas.height = img.naturalHeight;
+              canvas.getContext('2d').drawImage(img, 0, 0);
               resolve(canvas.toDataURL('image/jpeg', 0.85));
             };
             img.src = URL.createObjectURL(blob);
           });
-          if(!fotosHeader) {
-            doc.addPage(); y = pdfHeader(doc, 'Fotografias Clinicas', pac);
-            doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(109,40,217);
-            doc.text('Fotografias Clinicas', 14, y); y += 10; doc.setTextColor(30,30,30);
-            fotosHeader = true;
-          }
-          const x = marginX + col * (imgW + gap);
-          if(y + imgH > 255) { doc.addPage(); y = 20; col = 0; }
-          doc.addImage(correctedB64, 'JPEG', x, y, imgW, imgH);
-          col++;
-          if(col >= cols) { col = 0; y += imgH + gap; }
-        } catch(e) { console.warn('Foto no disponible:', f.url); }
+          addImgPDF(correctedB64, 'JPEG');
+        } catch(e) { console.warn('Foto Cloudinary no disponible:', f.url); }
+      }
+
+      // Drive: proxy a través de la Netlify Function para evitar CORS
+      for(const f of fotosDrive) {
+        try {
+          const resp = await fetch(`/.netlify/functions/gcal?action=drive-image&fileId=${f.driveId}`);
+          if(!resp.ok) throw new Error(resp.statusText);
+          const { base64, mimeType } = await resp.json();
+          if(!base64) throw new Error('Sin datos de imagen');
+          const fmt = mimeType?.includes('png') ? 'PNG' : 'JPEG';
+          addImgPDF(`data:${mimeType};base64,${base64}`, fmt);
+        } catch(e) { console.warn('Foto Drive no disponible:', f.driveId, e.message); }
       }
     }
   } catch(e) { console.warn('Error cargando fotos:', e); }
