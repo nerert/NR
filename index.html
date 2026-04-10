@@ -3149,8 +3149,13 @@ async function gcalSyncCita(cita) {
 
 async function gcalSyncAhora() {
   if(!gcalReady) { toast('⚠️ Conecta Google Calendar primero'); return; }
-  const hoy = new Date().toISOString().slice(0, 10);
-  const citasHoy = DB.citas.filter(c => c.fecha === hoy);
+  const ahora = new Date();
+  const horaActual = ahora.toTimeString().slice(0, 5); // "HH:MM"
+  const hoy = ahora.toISOString().slice(0, 10);
+  // Solo citas futuras: fecha posterior a hoy, o hoy con hora >= ahora
+  const citasHoy = DB.citas.filter(c =>
+    c.fecha > hoy || (c.fecha === hoy && (c.hora || '00:00') >= horaActual)
+  );
   gcalSetStatus('Sincronizando…', 'loading');
   let ok = 0, fail = 0;
   // App → GCal: sincronizar citas sin gcalEventId
