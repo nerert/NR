@@ -2924,61 +2924,79 @@ async function cargarTodo() {
 }
 
 // ── GOOGLE CALENDAR ────────────────────────────────────────────────────────
-// Configuración: sustituye con tus credenciales de Google Cloud Console
-const GCAL_CLIENT_ID = '842082089480-n8tp6qdgsat8dqd03eo1q9omncn7e0tf.apps.googleusercontent.com';
-const GCAL_API_KEY   = 'TU_API_KEY';                               // ← reemplazar
-const GCAL_SCOPES    = 'https://www.googleapis.com/auth/calendar.events';
+const GCAL_CLIENT_ID   = '842082089480-n8tp6qdgsat8dqd03eo1q9omncn7e0tf.apps.googleusercontent.com';
+const GCAL_SCOPES      = 'https://www.googleapis.com/auth/calendar.events';
 const GCAL_CALENDAR_ID = 'primary';
 
 let gcalTokenClient = null;
 let gcalAccessToken = null;
 let gcalReady       = false;
+let gcalGapiInited  = false;
+let gcalGisInited   = false;
 
-function gcalSetStatus(msg, type = 'info', time = '') {
-  const bar  = document.getElementById('gcal-status-bar');
-  const icon = document.getElementById('gcal-status-icon');
-  const msgEl= document.getElementById('gcal-status-msg');
-  const timeEl=document.getElementById('gcal-status-time');
-  if(!bar) return;
-  const colors = { info:'#6d28d9', ok:'#16a34a', error:'#ef4444', loading:'#d97706' };
-  const icons  = { info:'📅', ok:'✅', error:'❌', loading:'⏳' };
-  bar.style.display = 'flex';
-  bar.style.borderColor = type==='ok' ? '#bbf7d0' : type==='error' ? '#fecaca' : '#ddd6fe';
-  bar.style.background  = type==='ok' ? '#f0fdf4' : type==='error' ? '#fef2f2' : '#f5f3ff';
-  icon.textContent = icons[type] || '📅';
-  msgEl.style.color = colors[type] || '#6d28d9';
-  msgEl.textContent = msg;
-  timeEl.textContent = time || (type==='ok' ? new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) : '');
-}
-
-function gcalInit() {
-  if(!window.google || !window.gapi) return;
+// Llamado por onload de apis.google.com/js/api.js
+function gcalGapiLoaded() {
   gapi.load('client', async () => {
     try {
-      await gapi.client.init({ apiKey: GCAL_API_KEY, discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'] });
-      gcalTokenClient = google.accounts.oauth2.initTokenClient({
-        client_id: GCAL_CLIENT_ID,
-        scope: GCAL_SCOPES,
-        callback: (resp) => {
-          if(resp.error) { gcalSetStatus('Error al autenticar con Google: ' + resp.error, 'error'); return; }
-          gcalAccessToken = resp.access_token;
-          gcalReady = true;
-          gcalOnConnected();
-        }
+      await gapi.client.init({
+        discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest']
       });
-      gcalReady = false;
-      document.getElementById('gcal-auth-btn').textContent = '🔗 Conectar Google';
-      gcalSetStatus('Google Calendar disponible. Haz clic en "Conectar Google" para autorizar.', 'info');
-      document.getElementById('gcal-status-bar').style.display = 'flex';
+      gcalGapiInited = true;
+      gcalMaybeReady();
     } catch(e) {
-      console.warn('[GCal] init error', e);
+      console.warn('[GCal] gapi init error', e);
+      gcalSetStatus('Error al cargar Google API: ' + (e.message || JSON.stringify(e)), 'error');
     }
   });
 }
 
+// Llamado por onload de accounts.google.com/gsi/client
+function gcalGisLoaded() {
+  try {
+    gcalTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GCAL_CLIENT_ID,
+      scope: GCAL_SCOPES,
+      callback: (resp) => {
+        if(resp.error) { gcalSetStatus('Error al autenticar: ' + resp.error, 'error'); return; }
+        gcalAccessToken = resp.access_token;
+        gcalReady = true;
+        gcalOnConnected();
+      }
+    });
+    gcalGisInited = true;
+    gcalMaybeReady();
+  } catch(e) {
+    console.warn('[GCal] GIS init error', e);
+    gcalSetStatus('Error al inicializar Google Identity: ' + (e.message || e), 'error');
+  }
+}
+
+function gcalMaybeReady() {
+  if(gcalGapiInited && gcalGisInited) {
+    gcalSetStatus('Google Calendar listo. Haz clic en "Conectar Google" para autorizar.', 'info');
+    document.getElementById('gcal-status-bar').style.display = 'flex';
+  }
+}
+
+function gcalSetStatus(msg, type = 'info', time = '') {
+  const bar   = document.getElementById('gcal-status-bar');
+  const icon  = document.getElementById('gcal-status-icon');
+  const msgEl = document.getElementById('gcal-status-msg');
+  const timeEl= document.getElementById('gcal-status-time');
+  if(!bar) return;
+  const colors = { info:'#6d28d9', ok:'#16a34a', error:'#ef4444', loading:'#d97706' };
+  const icons  = { info:'📅', ok:'✅', error:'❌', loading:'⏳' };
+  bar.style.display     = 'flex';
+  bar.style.borderColor = type==='ok' ? '#bbf7d0' : type==='error' ? '#fecaca' : '#ddd6fe';
+  bar.style.background  = type==='ok' ? '#f0fdf4' : type==='error' ? '#fef2f2' : '#f5f3ff';
+  icon.textContent      = icons[type] || '📅';
+  msgEl.style.color     = colors[type] || '#6d28d9';
+  msgEl.textContent     = msg;
+  timeEl.textContent    = time || (type==='ok' ? new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) : '');
+}
+
 function gcalToggleAuth() {
   if(gcalReady) {
-    // Desconectar
     gcalAccessToken = null; gcalReady = false;
     gapi.client.setToken(null);
     document.getElementById('gcal-auth-btn').textContent = '🔗 Conectar Google';
@@ -2988,7 +3006,10 @@ function gcalToggleAuth() {
     gcalSetStatus('Google Calendar desconectado.', 'info', '');
     return;
   }
-  if(!gcalTokenClient) { toast('⚠️ Google API no cargada aún. Espera un momento.'); return; }
+  if(!gcalGapiInited || !gcalGisInited) {
+    toast('⏳ Cargando Google API… intenta en unos segundos.');
+    return;
+  }
   gcalTokenClient.requestAccessToken({ prompt: '' });
 }
 
@@ -3098,13 +3119,6 @@ async function gcalSyncAhora() {
   gcalLoadEventsHoy();
 }
 
-window.addEventListener('load', () => {
-  // Inicializa GCal cuando las APIs de Google estén disponibles
-  const waitGCal = setInterval(() => {
-    if(window.google && window.gapi) { clearInterval(waitGCal); gcalInit(); }
-  }, 500);
-  setTimeout(() => clearInterval(waitGCal), 15000); // timeout 15s
-});
 
 // ── INIT ───────────────────────────────────────────────────────────────────
 initOdontograma();
@@ -3119,7 +3133,7 @@ document.getElementById('pago-fecha').value = new Date().toISOString().slice(0,1
 document.getElementById('cita-fecha').value = new Date().toISOString().slice(0,10);
 </script>
 <!-- Google API para Google Calendar -->
-<script src="https://apis.google.com/js/api.js" defer></script>
-<script src="https://accounts.google.com/gsi/client" defer></script>
+<script src="https://apis.google.com/js/api.js" onload="gcalGapiLoaded()" defer></script>
+<script src="https://accounts.google.com/gsi/client" onload="gcalGisLoaded()" defer></script>
 </body>
 </html>
