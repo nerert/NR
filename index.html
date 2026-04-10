@@ -393,7 +393,25 @@ th{font-weight:700;color:var(--ink2);font-size:0.78rem;text-transform:uppercase;
 <div class="page" id="page-citas">
   <div class="page-header">
     <div><h2>Agenda</h2><p>Calendario de citas</p></div>
-    <button class="btn btn-primary" onclick="openModal('modal-cita')">+ Nueva cita</button>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:flex-end">
+      <button class="btn btn-secondary" id="gcal-auth-btn" onclick="gcalToggleAuth()">🔗 Conectar Google</button>
+      <button class="btn btn-secondary" id="gcal-sync-btn" onclick="gcalSyncAhora()" style="display:none">🔄 Sincronizar ahora</button>
+      <button class="btn btn-primary" onclick="openModal('modal-cita')">+ Nueva cita</button>
+    </div>
+  </div>
+  <!-- Barra de estado de sincronización Google Calendar -->
+  <div id="gcal-status-bar" style="display:none;background:#f5f3ff;border:1.5px solid #ddd6fe;border-radius:12px;padding:10px 16px;margin-bottom:12px;align-items:center;gap:10px;font-size:.88rem">
+    <span id="gcal-status-icon">📅</span>
+    <span id="gcal-status-msg" style="flex:1;color:#6d28d9;font-weight:600">Conectando con Google Calendar…</span>
+    <span id="gcal-status-time" style="color:#6b7280;font-size:.8rem"></span>
+  </div>
+  <!-- Eventos de Google Calendar del día -->
+  <div id="gcal-hoy-card" class="card" style="display:none;margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:10px">
+      <h3 style="margin:0;color:var(--accent);font-size:1rem">📅 Google Calendar — Hoy</h3>
+      <button onclick="gcalLoadEventsHoy()" style="background:none;border:none;cursor:pointer;color:var(--accent);font-size:.85rem;font-weight:700">⟳ Recargar</button>
+    </div>
+    <div id="gcal-eventos-hoy"><p style="color:var(--ink2);font-size:.9rem;margin:0">Sin eventos en Google Calendar para hoy.</p></div>
   </div>
   <div class="card">
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:12px">
@@ -648,6 +666,12 @@ th{font-weight:700;color:var(--ink2);font-size:0.78rem;text-transform:uppercase;
     </div>
     <div class="form-group"><label>Motivo</label><input id="cita-motivo" placeholder="Limpieza, revisión..."></div>
     <div class="form-group"><label>Notas</label><textarea id="cita-notas" rows="2"></textarea></div>
+    <div id="gcal-sync-opt" style="display:none;margin:8px 0 4px">
+      <label style="display:flex;align-items:center;gap:8px;cursor:pointer;font-size:.9rem;color:var(--ink)">
+        <input type="checkbox" id="cita-gcal-sync" style="width:16px;height:16px;accent-color:#6d28d9">
+        <span>📅 Sincronizar a Google Calendar automáticamente</span>
+      </label>
+    </div>
     <button class="btn btn-primary" style="width:100%;margin-top:8px" onclick="guardarCita()">Guardar cita</button>
   </div>
 </div>
@@ -1615,12 +1639,14 @@ async function guardarCita() {
       renderCalendario();
       renderDashboard();
       toast('✅ Cita actualizada');
+      if(document.getElementById('cita-gcal-sync')?.checked) gcalSyncCita({ id: editIdSnap, ...data });
     } else toast('❌ Error al guardar');
   } else {
     const id = await fbAdd('citas', data);
     if(id) {
       data.id=id; DB.citas.push(data);
       closeModal('modal-cita'); renderCalendario(); renderDashboard(); toast('✅ Cita agendada');
+      if(document.getElementById('cita-gcal-sync')?.checked) gcalSyncCita(data);
     } else toast('❌ Error al guardar');
   }
 }
@@ -2896,6 +2922,189 @@ async function cargarTodo() {
   toast(`✅ ${pacientes.length} pacientes cargados`);
 }
 
+// ── GOOGLE CALENDAR ────────────────────────────────────────────────────────
+// Configuración: sustituye con tus credenciales de Google Cloud Console
+const GCAL_CLIENT_ID = 'TU_CLIENT_ID.apps.googleusercontent.com'; // ← reemplazar
+const GCAL_API_KEY   = 'TU_API_KEY';                               // ← reemplazar
+const GCAL_SCOPES    = 'https://www.googleapis.com/auth/calendar.events';
+const GCAL_CALENDAR_ID = 'primary';
+
+let gcalTokenClient = null;
+let gcalAccessToken = null;
+let gcalReady       = false;
+
+function gcalSetStatus(msg, type = 'info', time = '') {
+  const bar  = document.getElementById('gcal-status-bar');
+  const icon = document.getElementById('gcal-status-icon');
+  const msgEl= document.getElementById('gcal-status-msg');
+  const timeEl=document.getElementById('gcal-status-time');
+  if(!bar) return;
+  const colors = { info:'#6d28d9', ok:'#16a34a', error:'#ef4444', loading:'#d97706' };
+  const icons  = { info:'📅', ok:'✅', error:'❌', loading:'⏳' };
+  bar.style.display = 'flex';
+  bar.style.borderColor = type==='ok' ? '#bbf7d0' : type==='error' ? '#fecaca' : '#ddd6fe';
+  bar.style.background  = type==='ok' ? '#f0fdf4' : type==='error' ? '#fef2f2' : '#f5f3ff';
+  icon.textContent = icons[type] || '📅';
+  msgEl.style.color = colors[type] || '#6d28d9';
+  msgEl.textContent = msg;
+  timeEl.textContent = time || (type==='ok' ? new Date().toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) : '');
+}
+
+function gcalInit() {
+  if(!window.google || !window.gapi) return;
+  gapi.load('client', async () => {
+    try {
+      await gapi.client.init({ apiKey: GCAL_API_KEY, discoveryDocs: ['https://www.googleapis.com/discovery/v1/apis/calendar/v3/rest'] });
+      gcalTokenClient = google.accounts.oauth2.initTokenClient({
+        client_id: GCAL_CLIENT_ID,
+        scope: GCAL_SCOPES,
+        callback: (resp) => {
+          if(resp.error) { gcalSetStatus('Error al autenticar con Google: ' + resp.error, 'error'); return; }
+          gcalAccessToken = resp.access_token;
+          gcalReady = true;
+          gcalOnConnected();
+        }
+      });
+      gcalReady = false;
+      document.getElementById('gcal-auth-btn').textContent = '🔗 Conectar Google';
+      gcalSetStatus('Google Calendar disponible. Haz clic en "Conectar Google" para autorizar.', 'info');
+      document.getElementById('gcal-status-bar').style.display = 'flex';
+    } catch(e) {
+      console.warn('[GCal] init error', e);
+    }
+  });
+}
+
+function gcalToggleAuth() {
+  if(gcalReady) {
+    // Desconectar
+    gcalAccessToken = null; gcalReady = false;
+    gapi.client.setToken(null);
+    document.getElementById('gcal-auth-btn').textContent = '🔗 Conectar Google';
+    document.getElementById('gcal-sync-btn').style.display = 'none';
+    document.getElementById('gcal-hoy-card').style.display = 'none';
+    document.getElementById('gcal-sync-opt').style.display = 'none';
+    gcalSetStatus('Google Calendar desconectado.', 'info', '');
+    return;
+  }
+  if(!gcalTokenClient) { toast('⚠️ Google API no cargada aún. Espera un momento.'); return; }
+  gcalTokenClient.requestAccessToken({ prompt: '' });
+}
+
+function gcalOnConnected() {
+  gapi.client.setToken({ access_token: gcalAccessToken });
+  document.getElementById('gcal-auth-btn').textContent = '🔌 Desconectar Google';
+  document.getElementById('gcal-sync-btn').style.display = '';
+  document.getElementById('gcal-sync-opt').style.display = '';
+  gcalSetStatus('Conectado a Google Calendar', 'ok');
+  gcalLoadEventsHoy();
+}
+
+async function gcalLoadEventsHoy() {
+  if(!gcalReady) return;
+  const hoy = new Date();
+  const inicio = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate()).toISOString();
+  const fin    = new Date(hoy.getFullYear(), hoy.getMonth(), hoy.getDate(), 23, 59, 59).toISOString();
+  gcalSetStatus('Cargando eventos del día…', 'loading');
+  try {
+    const resp = await gapi.client.calendar.events.list({
+      calendarId: GCAL_CALENDAR_ID,
+      timeMin: inicio, timeMax: fin,
+      singleEvents: true, orderBy: 'startTime', maxResults: 20
+    });
+    const items = resp.result.items || [];
+    const card  = document.getElementById('gcal-hoy-card');
+    const cont  = document.getElementById('gcal-eventos-hoy');
+    card.style.display = '';
+    if(items.length === 0) {
+      cont.innerHTML = '<p style="color:var(--ink2);font-size:.9rem;margin:0">Sin eventos en Google Calendar para hoy.</p>';
+    } else {
+      cont.innerHTML = items.map(ev => {
+        const start = ev.start.dateTime ? new Date(ev.start.dateTime).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) : 'Todo el día';
+        const end   = ev.end.dateTime   ? new Date(ev.end.dateTime).toLocaleTimeString('es-MX',{hour:'2-digit',minute:'2-digit'}) : '';
+        return `<div style="display:flex;align-items:flex-start;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)">
+          <div style="background:#6d28d9;color:#fff;border-radius:8px;padding:4px 8px;font-size:.78rem;font-weight:700;white-space:nowrap;min-width:54px;text-align:center">${start}${end ? '<br>'+end : ''}</div>
+          <div><div style="font-weight:600;font-size:.9rem">${ev.summary||'Sin título'}</div>${ev.description?'<div style="font-size:.8rem;color:var(--ink2)">'+ev.description+'</div>':''}</div>
+        </div>`;
+      }).join('');
+    }
+    gcalSetStatus(`Sincronizado — ${items.length} evento${items.length!==1?'s':''} hoy`, 'ok');
+  } catch(e) {
+    console.error('[GCal] load events', e);
+    gcalSetStatus('Error al cargar eventos: ' + (e.result?.error?.message || e.message || 'desconocido'), 'error');
+  }
+}
+
+async function gcalSyncCita(cita) {
+  if(!gcalReady) { toast('⚠️ Conecta Google Calendar primero'); return; }
+  const pac = DB.pacientes.find(p => p.id === cita.pacienteId);
+  const nombre = pac ? pac.nombre + ' ' + pac.apellido : 'Paciente';
+  const [y, m, d] = (cita.fecha || '').split('-');
+  const [hh, mm] = (cita.hora || '00:00').split(':');
+  if(!y || !m || !d) { toast('⚠️ La cita no tiene fecha válida'); return; }
+  const startDT = new Date(+y, +m-1, +d, +hh, +mm);
+  const endDT   = new Date(startDT.getTime() + 60 * 60 * 1000); // +1h
+  const event = {
+    summary: `Cita dental: ${nombre}`,
+    description: [cita.motivo, cita.notas].filter(Boolean).join('\n'),
+    start: { dateTime: startDT.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    end:   { dateTime: endDT.toISOString(),   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+    reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 60 }] }
+  };
+  gcalSetStatus('Sincronizando cita a Google Calendar…', 'loading');
+  try {
+    await gapi.client.calendar.events.insert({ calendarId: GCAL_CALENDAR_ID, resource: event });
+    gcalSetStatus('Cita sincronizada a Google Calendar', 'ok');
+    toast('📅 Cita enviada a Google Calendar');
+    gcalLoadEventsHoy();
+  } catch(e) {
+    console.error('[GCal] sync cita', e);
+    gcalSetStatus('Error al sincronizar: ' + (e.result?.error?.message || e.message || 'desconocido'), 'error');
+    toast('❌ Error al sincronizar con Google Calendar');
+  }
+}
+
+async function gcalSyncAhora() {
+  if(!gcalReady) { toast('⚠️ Conecta Google Calendar primero'); return; }
+  const hoy = new Date().toISOString().slice(0, 10);
+  const citasHoy = DB.citas.filter(c => c.fecha === hoy);
+  if(citasHoy.length === 0) { toast('ℹ️ No hay citas para hoy que sincronizar'); gcalLoadEventsHoy(); return; }
+  gcalSetStatus(`Sincronizando ${citasHoy.length} cita${citasHoy.length!==1?'s':''} de hoy…`, 'loading');
+  let ok = 0, fail = 0;
+  for(const c of citasHoy) {
+    const pac = DB.pacientes.find(p => p.id === c.pacienteId);
+    const nombre = pac ? pac.nombre + ' ' + pac.apellido : 'Paciente';
+    const [y, m, d] = (c.fecha || '').split('-');
+    const [hh, mm] = (c.hora || '00:00').split(':');
+    if(!y) { fail++; continue; }
+    const startDT = new Date(+y, +m-1, +d, +hh, +mm);
+    const endDT   = new Date(startDT.getTime() + 60 * 60 * 1000);
+    const event = {
+      summary: `Cita dental: ${nombre}`,
+      description: [c.motivo, c.notas].filter(Boolean).join('\n'),
+      start: { dateTime: startDT.toISOString(), timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+      end:   { dateTime: endDT.toISOString(),   timeZone: Intl.DateTimeFormat().resolvedOptions().timeZone },
+      reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 60 }] }
+    };
+    try {
+      await gapi.client.calendar.events.insert({ calendarId: GCAL_CALENDAR_ID, resource: event });
+      ok++;
+    } catch(e) { console.error('[GCal] sync', e); fail++; }
+  }
+  const msg = ok > 0 ? `${ok} cita${ok!==1?'s':''} sincronizada${ok!==1?'s':''}${fail>0?' ('+fail+' error'+(fail!==1?'es':'')+')':''}` : `Error al sincronizar (${fail} fallo${fail!==1?'s':''})`;
+  gcalSetStatus(msg, ok>0?'ok':'error');
+  toast(ok>0 ? `📅 ${msg}` : `❌ ${msg}`);
+  gcalLoadEventsHoy();
+}
+
+window.addEventListener('load', () => {
+  // Inicializa GCal cuando las APIs de Google estén disponibles
+  const waitGCal = setInterval(() => {
+    if(window.google && window.gapi) { clearInterval(waitGCal); gcalInit(); }
+  }, 500);
+  setTimeout(() => clearInterval(waitGCal), 15000); // timeout 15s
+});
+
 // ── INIT ───────────────────────────────────────────────────────────────────
 initOdontograma();
 renderCatalogoChips();
@@ -2908,5 +3117,8 @@ document.getElementById('modal-presup').addEventListener('click', e => { if(e.ta
 document.getElementById('pago-fecha').value = new Date().toISOString().slice(0,10);
 document.getElementById('cita-fecha').value = new Date().toISOString().slice(0,10);
 </script>
+<!-- Google API para Google Calendar -->
+<script src="https://apis.google.com/js/api.js" async defer></script>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 </body>
 </html>
