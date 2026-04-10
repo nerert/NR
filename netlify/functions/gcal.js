@@ -10,10 +10,21 @@ const path = require('path');
 
 const CLIENT_ID     = process.env.GCAL_CLIENT_ID;
 const CLIENT_SECRET = process.env.GCAL_CLIENT_SECRET;
-const APP_URL       = process.env.GCAL_APP_URL || 'https://kn-dental.netlify.app';
-// GCAL_REDIRECT_URI es opcional: si no se define, se calcula desde APP_URL.
-const REDIRECT_URI  = process.env.GCAL_REDIRECT_URI ||
-  `${APP_URL}/.netlify/functions/gcal?action=callback`;
+
+// En producción (NETLIFY=true), si GCAL_APP_URL apunta a localhost
+// la ignoramos y usamos la URL de producción. Esto evita que variables
+// copiadas del .env local rompan el redirect del callback en Netlify.
+const _IS_PRODUCTION = !!(process.env.NETLIFY || process.env.AWS_LAMBDA_FUNCTION_NAME);
+const _configuredURL  = process.env.GCAL_APP_URL;
+const APP_URL = (_IS_PRODUCTION && _configuredURL?.includes('localhost'))
+  ? 'https://kn-dental.netlify.app'
+  : (_configuredURL || 'https://kn-dental.netlify.app');
+
+// GCAL_REDIRECT_URI también se ignora en producción si apunta a localhost.
+const _configuredRedirect = process.env.GCAL_REDIRECT_URI;
+const REDIRECT_URI = (_IS_PRODUCTION && _configuredRedirect?.includes('localhost'))
+  ? `${APP_URL}/.netlify/functions/gcal?action=callback`
+  : (_configuredRedirect || `${APP_URL}/.netlify/functions/gcal?action=callback`);
 const CALENDAR_ID   = 'primary';
 
 const GOOGLE_TOKEN_URL    = 'https://oauth2.googleapis.com/token';
