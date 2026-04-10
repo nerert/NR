@@ -27,13 +27,23 @@ const CORS = {
 const IS_LOCAL    = !process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCTION_NAME;
 const TOKENS_FILE = path.join(__dirname, '../../.gcal-tokens.json');
 
+// Crea el store pasando siteID y token explícitamente cuando el contexto
+// automático (NETLIFY_BLOBS_CONTEXT) no está disponible (ej. Netlify Drop).
+// Variables requeridas en el dashboard: NETLIFY_SITE_ID, NETLIFY_TOKEN
+function getBlobStore() {
+  const opts = { name: 'gcal', consistency: 'strong' };
+  if(process.env.NETLIFY_SITE_ID) opts.siteID = process.env.NETLIFY_SITE_ID;
+  if(process.env.NETLIFY_TOKEN)   opts.token   = process.env.NETLIFY_TOKEN;
+  return getStore(opts);
+}
+
 async function getTokens() {
   if(IS_LOCAL) {
     try { return JSON.parse(fs.readFileSync(TOKENS_FILE, 'utf8')); }
     catch(e) { return null; }
   }
   try {
-    const store = getStore({ name: 'gcal', consistency: 'strong' });
+    const store = getBlobStore();
     return await store.get('tokens', { type: 'json' });
   } catch(e) { console.error('[gcal] getTokens error', e); return null; }
 }
@@ -43,7 +53,7 @@ async function saveTokens(tokens) {
     fs.writeFileSync(TOKENS_FILE, JSON.stringify(tokens, null, 2));
     return;
   }
-  const store = getStore({ name: 'gcal', consistency: 'strong' });
+  const store = getBlobStore();
   await store.setJSON('tokens', tokens);
 }
 
@@ -52,7 +62,7 @@ async function deleteTokens() {
     try { fs.unlinkSync(TOKENS_FILE); } catch(e) {}
     return;
   }
-  const store = getStore({ name: 'gcal', consistency: 'strong' });
+  const store = getBlobStore();
   await store.delete('tokens');
 }
 
