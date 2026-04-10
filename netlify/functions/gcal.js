@@ -9,8 +9,12 @@ const path = require('path');
 
 const CLIENT_ID     = process.env.GCAL_CLIENT_ID;
 const CLIENT_SECRET = process.env.GCAL_CLIENT_SECRET;
-const REDIRECT_URI  = process.env.GCAL_REDIRECT_URI;
 const APP_URL       = process.env.GCAL_APP_URL || 'https://kn-dental.netlify.app';
+// GCAL_REDIRECT_URI es opcional: si no se define, se calcula desde APP_URL.
+// Esto garantiza que en producción siempre apunte al sitio correcto aunque
+// la variable no esté configurada en el dashboard de Netlify.
+const REDIRECT_URI  = process.env.GCAL_REDIRECT_URI ||
+  `${APP_URL}/.netlify/functions/gcal?action=callback`;
 const CALENDAR_ID   = 'primary';
 
 const GOOGLE_TOKEN_URL    = 'https://oauth2.googleapis.com/token';
