@@ -702,11 +702,6 @@ const firebaseConfig = {
 const fbApp = firebase.initializeApp(firebaseConfig);
 const db    = firebase.firestore();
 
-// ── INIT DIRECTO (sin login) ──────────────────────────────────────────────
-document.querySelector('.app-shell').style.display = '';
-cargarTodo();
-cargarCatalogo();
-
 // ── DB & STATE ─────────────────────────────────────────────────────────────
 const DB = { pacientes:[], odontograma:[], historia:{}, presupuestos:[], citas:[], pagos:[], fotos:{}, notas:[], ruta:[] };
 let pacienteActivo = null;
@@ -3123,6 +3118,11 @@ document.getElementById('modal-presup').addEventListener('click', e => { if(e.ta
 // Set today's date in pago
 document.getElementById('pago-fecha').value = new Date().toISOString().slice(0,10);
 document.getElementById('cita-fecha').value = new Date().toISOString().slice(0,10);
+
+// ── ARRANQUE DIRECTO (sin login) ───────────────────────────────────────────
+document.querySelector('.app-shell').style.display = '';
+cargarTodo();
+cargarCatalogo();
 </script>
 <!-- Google API para Google Calendar -->
 <!-- Google API scripts eliminados: ahora la integración va por Netlify Functions -->
