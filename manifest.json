@@ -2,11 +2,13 @@
   "name": "KN Dental",
   "short_name": "KN Dental",
   "description": "Sistema Clínico Dental - Dra. Karen López Venzor",
-  "start_url": "/",
+  "start_url": "https://kn-dental.netlify.app/",
+  "scope": "https://kn-dental.netlify.app/",
   "display": "standalone",
   "background_color": "#6d28d9",
   "theme_color": "#6d28d9",
   "orientation": "portrait-primary",
+  "lang": "es",
   "icons": [
     { "src": "/icon-180.png", "sizes": "180x180", "type": "image/png" },
     { "src": "/icon-512.png", "sizes": "512x512", "type": "image/png" }
