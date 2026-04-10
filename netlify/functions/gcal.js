@@ -23,7 +23,8 @@ const CORS = {
 };
 
 // ── Token storage: archivo local en dev, Netlify Blobs en producción ───────
-const IS_LOCAL    = !process.env.NETLIFY;
+// NETLIFY=true o AWS_LAMBDA_FUNCTION_NAME indica entorno de producción/función
+const IS_LOCAL    = !process.env.NETLIFY && !process.env.AWS_LAMBDA_FUNCTION_NAME;
 const TOKENS_FILE = path.join(__dirname, '../../.gcal-tokens.json');
 
 async function getTokens() {
