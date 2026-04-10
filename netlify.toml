@@ -5,5 +5,8 @@
 [functions]
   node_bundler = "esbuild"
 
-[functions."gcal"]
-  included_files = []
+[dev]
+  port = 8888
+  targetPort = 3999
+  framework = "#static"
+  autoLaunch = false

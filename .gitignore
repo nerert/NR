@@ -1,0 +1,7 @@
+# Local Netlify folder
+.netlify
+
+# Secretos y tokens locales — nunca subir al repo
+.env
+.gcal-tokens.json
+node_modules/
