@@ -272,28 +272,35 @@ exports.handler = async (event) => {
       return ok({ ok: true });
     }
 
-    // ── Drive ──────────────────────────────────────────────────────────────
+    // ── Drive / Calendar extra ─────────────────────────────────────────────
+
+    // 9b. Eventos futuros (hasta 6 meses) — usado para detectar eliminaciones en GCal
+    if(action === 'events-future' && event.httpMethod === 'GET') {
+      const now    = new Date();
+      const future = new Date(now.getTime() + 183 * 24 * 60 * 60 * 1000);
+      const qs = new URLSearchParams({
+        timeMin: now.toISOString(), timeMax: future.toISOString(),
+        singleEvents: 'true', orderBy: 'startTime', maxResults: '500'
+      });
+      const data = await calFetch(`/calendars/${encodeURIComponent(CALENDAR_ID)}/events?${qs}`, accessToken);
+      return ok(data);
+    }
 
     // 9. Token para uploads cliente-a-Drive
     if(action === 'drive-token' && event.httpMethod === 'GET') {
       return ok({ accessToken });
     }
 
-    // 10. Crear/obtener estructura de carpetas del paciente
+    // 10. Crear/obtener carpeta del paciente en Drive
+    //     Estructura: "Pacientes" > "Nombre Paciente"  (sin subcarpetas)
     //     Body: { pacienteNombre: string }
-    //     Retorna: { fotos, radiografias, documentos }  (IDs de carpetas Drive)
+    //     Retorna: { folderId }
     if(action === 'drive-ensure-folder' && event.httpMethod === 'POST') {
       const { pacienteNombre } = JSON.parse(event.body || '{}');
       if(!pacienteNombre) return err('pacienteNombre requerido', 400);
-
-      const rootId  = await driveEnsureFolder('KN Dental', null, accessToken);
-      const pacId   = await driveEnsureFolder(pacienteNombre, rootId, accessToken);
-      const [fotosId, radiosId, docsId] = await Promise.all([
-        driveEnsureFolder('fotos',         pacId, accessToken),
-        driveEnsureFolder('radiografias',  pacId, accessToken),
-        driveEnsureFolder('documentos',    pacId, accessToken),
-      ]);
-      return ok({ fotos: fotosId, radiografias: radiosId, documentos: docsId });
+      const rootId       = await driveEnsureFolder('Pacientes', null, accessToken);
+      const pacienteFolderId = await driveEnsureFolder(pacienteNombre, rootId, accessToken);
+      return ok({ folderId: pacienteFolderId });
     }
 
     // 11. Eliminar archivo de Drive

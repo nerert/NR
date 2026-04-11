@@ -204,8 +204,14 @@ th{font-weight:700;color:var(--ink2);font-size:0.78rem;text-transform:uppercase;
     <select id="select-paciente-odo" onchange="setPacienteActivo(this.value)" style="width:100%;margin-top:4px;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.9rem"></select>
   </div>
   <div class="card">
+    <!-- Modo adulto / niño -->
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button id="odo-mode-adulto" class="btn btn-primary" style="font-size:.85rem;padding:6px 14px" onclick="switchOdoMode('adulto')">🦷 Adulto</button>
+      <button id="odo-mode-nino"   class="btn btn-secondary" style="font-size:.85rem;padding:6px 14px" onclick="switchOdoMode('nino')">👶 Niño</button>
+    </div>
     <div class="odo-legend" id="odo-legend"></div>
     <div class="odo-grid" id="odo-grid"></div>
+    <div class="odo-grid" id="odo-grid-nino" style="display:none"></div>
     <div id="panel-odo" style="display:none;margin-top:16px;padding-top:16px;border-top:1px solid var(--border)">
       <p style="font-weight:700;margin-bottom:12px">Diente: <span id="badge-diente" style="color:var(--accent)"></span></p>
       <div class="form-row">
@@ -411,33 +417,23 @@ th{font-weight:700;color:var(--ink2);font-size:0.78rem;text-transform:uppercase;
   </div>
 </div>
 
-<!-- FOTOS / ARCHIVOS DRIVE -->
+<!-- FOTOS -->
 <div class="page" id="page-fotos" style="position:relative">
-  <div id="fotos-overlay" class="overlay-block"><span style="font-size:2rem">📁</span><p>Selecciona un paciente para ver sus archivos</p></div>
+  <div id="fotos-overlay" class="overlay-block"><span style="font-size:2rem">📷</span><p>Selecciona un paciente para ver sus fotos</p></div>
   <div class="page-header">
-    <div><h2>Archivos</h2><p id="fotos-paciente-label">Selecciona un paciente</p></div>
+    <div><h2>Fotos</h2><p id="fotos-paciente-label">Selecciona un paciente</p></div>
+    <label class="btn btn-primary" id="btn-drive-upload" style="cursor:pointer">
+      📷 Agregar foto
+      <input type="file" id="drive-upload-input" accept="image/*" multiple style="display:none" onchange="abrirEditorFoto(this)">
+    </label>
   </div>
   <div class="card" style="margin-bottom:16px">
     <label style="font-size:.78rem;font-weight:600;color:var(--ink2);text-transform:uppercase;letter-spacing:.5px">Paciente</label>
     <select id="select-paciente-fotos" onchange="setPacienteActivo(this.value)" style="width:100%;margin-top:4px;padding:9px 12px;border:1.5px solid var(--border);border-radius:8px;font-family:inherit;font-size:.9rem"></select>
   </div>
-  <!-- Subtabs + upload -->
-  <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:16px">
-    <button id="tab-btn-fotos" class="btn btn-primary" style="font-size:.85rem;padding:7px 14px" onclick="switchArchivoTab('fotos')">📷 Fotos</button>
-    <button id="tab-btn-radiografias" class="btn btn-secondary" style="font-size:.85rem;padding:7px 14px" onclick="switchArchivoTab('radiografias')">🔬 Radiografías</button>
-    <button id="tab-btn-documentos" class="btn btn-secondary" style="font-size:.85rem;padding:7px 14px" onclick="switchArchivoTab('documentos')">📄 Documentos</button>
-    <label class="btn btn-secondary" id="btn-drive-upload" style="cursor:pointer;font-size:.85rem;padding:7px 14px;margin-left:auto">
-      ⬆️ Subir
-      <input type="file" id="drive-upload-input" multiple style="display:none" onchange="driveAgregarArchivos(this)">
-    </label>
-  </div>
-  <!-- Estado de subida -->
   <div id="drive-upload-status" style="display:none;text-align:center;padding:16px;color:var(--accent);background:var(--surface);border-radius:12px;margin-bottom:12px;font-weight:600"></div>
-  <!-- Grid Drive -->
   <div id="archivos-grid"></div>
-  <!-- Grid Cloudinary (fotos antiguas — solo visible en subtab Fotos) -->
   <div class="fotos-grid" id="fotos-grid"></div>
-  <!-- Compat: fotos-uploading usado por agregarFotos() legacy -->
   <div id="fotos-uploading" style="display:none"></div>
 </div>
 
@@ -966,10 +962,12 @@ function initOdontograma() {
       document.getElementById('odo-tratamiento').value = trat;
       const esGeneral = ['pdb','clase1','clase2','clase3'].includes(c.key);
       if(esGeneral) {
-        const todos = [18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28,48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
+        const todos = _odoMode === 'nino'
+          ? [55,54,53,52,51,61,62,63,64,65,85,84,83,82,81,71,72,73,74,75]
+          : [18,17,16,15,14,13,12,11,21,22,23,24,25,26,27,28,48,47,46,45,44,43,42,41,31,32,33,34,35,36,37,38];
         todos.forEach(n => colorDiente(n, c.key));
         document.getElementById('panel-odo').style.display = 'block';
-        document.getElementById('badge-diente').textContent = 'Todos';
+        document.getElementById('badge-diente').textContent = 'General';
         selDiente = 'todos';
         toast(`🦷 ${c.label} — aplica a toda la boca`);
       } else {
@@ -996,6 +994,33 @@ function initOdontograma() {
     });
     grid.appendChild(rowEl);
   });
+
+  // Dentición primaria (niños) — FDI: 51-55, 61-65, 71-75, 81-85
+  const supN = [55,54,53,52,51,61,62,63,64,65];
+  const infN = [85,84,83,82,81,71,72,73,74,75];
+  const gridN = document.getElementById('odo-grid-nino');
+  [supN,infN].forEach(row => {
+    const rowEl = document.createElement('div'); rowEl.className='odo-row';
+    row.forEach(num => {
+      const wrap = document.createElement('div');
+      wrap.className='diente-wrap'; wrap.id=`d${num}`; wrap.title=`Diente ${num}`;
+      wrap.innerHTML=`<svg viewBox="0 0 24 36" width="26" height="36"><ellipse cx="12" cy="20" rx="8" ry="11" class="tooth-body"/></svg><div class="diente-num" style="font-size:.6rem">${num}</div>`;
+      wrap.onclick = () => seleccionarDiente(num);
+      rowEl.appendChild(wrap);
+    });
+    gridN.appendChild(rowEl);
+  });
+}
+
+let _odoMode = 'adulto';
+function switchOdoMode(mode) {
+  _odoMode = mode;
+  document.getElementById('odo-mode-adulto').className = mode==='adulto' ? 'btn btn-primary' : 'btn btn-secondary';
+  document.getElementById('odo-mode-nino').className   = mode==='nino'   ? 'btn btn-primary' : 'btn btn-secondary';
+  document.getElementById('odo-grid').style.display      = mode==='adulto' ? '' : 'none';
+  document.getElementById('odo-grid-nino').style.display = mode==='nino'   ? '' : 'none';
+  document.getElementById('panel-odo').style.display = 'none';
+  selDiente = null;
 }
 
 function seleccionarDiente(num) {
@@ -1642,68 +1667,38 @@ async function guardarCita() {
 const CLOUDINARY_CLOUD = 'drpfwzgam';
 const CLOUDINARY_PRESET = 'kndental';
 
-let currentArchivoTab = 'fotos';
 const _driveFolderCache = {};
-
-function switchArchivoTab(tab) {
-  currentArchivoTab = tab;
-  ['fotos','radiografias','documentos'].forEach(t => {
-    const btn = document.getElementById(`tab-btn-${t}`);
-    if(btn) btn.className = t === tab ? 'btn btn-primary' : 'btn btn-secondary';
-  });
-  const inp = document.getElementById('drive-upload-input');
-  if(inp) inp.accept = tab === 'radiografias' ? 'image/*,.pdf,.dcm' : tab === 'documentos' ? '*/*' : 'image/*';
-  cargarFotos();
-}
+let _fotosActuales = [];
 
 function cargarFotos() {
   const pacId = document.getElementById('select-paciente-fotos')?.value || pacienteActivo;
   if(!pacId) return;
   const archivosGrid = document.getElementById('archivos-grid');
-  const fotosGrid    = document.getElementById('fotos-grid');
-
-  // Mostrar/ocultar fotos Cloudinary según subtab
-  if(fotosGrid) fotosGrid.style.display = currentArchivoTab === 'fotos' ? '' : 'none';
-
-  // ── Archivos Drive ──────────────────────────────────────────────────────
-  if(archivosGrid) {
-    db.collection('archivos').doc(pacId).get().then(doc => {
-      const arData = doc.exists ? doc.data() : {};
-      const lista  = arData[currentArchivoTab] || [];
-      const iconos = { fotos:'🖼️', radiografias:'🔬', documentos:'📄' };
-      const icono  = iconos[currentArchivoTab] || '📁';
-      archivosGrid.innerHTML = lista.length
-        ? `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px">`
-          + lista.map((f,i) => {
-            const esImagen = /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(f.name);
-            const thumb    = esImagen ? `<img src="https://drive.google.com/thumbnail?id=${f.driveId}&sz=w300" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px 8px 0 0;display:block">` : `<div style="width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:3rem">${icono}</div>`;
-            return `<div style="position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1.5px solid var(--border)">
-              <a href="${f.url}" target="_blank" title="${f.name}" style="text-decoration:none;display:block">${thumb}
-                <p style="font-size:.72rem;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:6px 8px">${f.name}</p>
-              </a>
-              <button onclick="borrarArchivoDrive('${pacId}','${f.driveId}','${currentArchivoTab}',${i})" title="Eliminar" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">🗑️</button>
-            </div>`;
-          }).join('') + '</div>'
-        : `<p style="color:var(--ink2);padding:8px 0">Sin ${currentArchivoTab} en Drive para este paciente.</p>`;
-    }).catch(() => {
-      if(archivosGrid) archivosGrid.innerHTML = '<p style="color:var(--ink2)">Error al cargar archivos</p>';
-    });
-  }
-
-  // ── Fotos Cloudinary (solo en subtab Fotos) ─────────────────────────────
-  if(currentArchivoTab === 'fotos' && fotosGrid) {
-    db.collection('fotos').doc(pacId).get().then(doc => {
-      const fotos = doc.exists ? (doc.data().lista || []) : [];
-      DB.fotos[pacId] = fotos;
-      fotosGrid.innerHTML = fotos.length
-        ? fotos.map((f,i) => `
-          <div class="foto-item" style="position:relative;border-radius:12px;overflow:hidden;aspect-ratio:1;background:#f3f4f6">
-            <img src="${f.url}" loading="lazy" style="width:100%;height:100%;object-fit:cover;image-orientation:from-image;cursor:pointer" onclick="verFoto('${f.url}')">
-            <button class="foto-del" onclick="borrarFoto('${pacId}','${f.publicId}',${i})" style="position:absolute;top:6px;right:6px;background:rgba(0,0,0,.5);color:#fff;border:none;border-radius:50%;width:28px;height:28px;cursor:pointer;font-size:.8rem">🗑️</button>
-          </div>`).join('')
-        : '';
-    }).catch(() => {});
-  }
+  if(!archivosGrid) return;
+  archivosGrid.innerHTML = '<p style="color:var(--ink2);padding:8px 0">⏳ Cargando fotos…</p>';
+  db.collection('archivos').doc(pacId).get().then(doc => {
+    const arData = doc.exists ? doc.data() : {};
+    const lista  = arData.fotos || [];
+    _fotosActuales = lista;
+    if(!lista.length) {
+      archivosGrid.innerHTML = '<p style="color:var(--ink2);padding:8px 0">Sin fotos en Drive para este paciente.</p>';
+      return;
+    }
+    archivosGrid.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px">`
+      + lista.map((f, i) => {
+        const esImagen = /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(f.name || '');
+        const thumb = esImagen
+          ? `<img src="https://drive.google.com/thumbnail?id=${f.driveId}&sz=w300" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px 8px 0 0;display:block;cursor:pointer" onclick="abrirVisor(${i})">`
+          : `<div style="width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:3rem;cursor:pointer" onclick="abrirVisor(${i})">🖼️</div>`;
+        return `<div style="position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1.5px solid var(--border)">
+          ${thumb}
+          <p style="font-size:.72rem;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:6px 8px">${f.name || 'foto'}</p>
+          <button onclick="borrarArchivoDrive('${pacId}','${f.driveId}',${i})" title="Eliminar" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">🗑️</button>
+        </div>`;
+      }).join('') + '</div>';
+  }).catch(() => {
+    if(archivosGrid) archivosGrid.innerHTML = '<p style="color:var(--ink2)">Error al cargar fotos</p>';
+  });
 }
 
 async function agregarFotos(input) {
@@ -1794,10 +1789,10 @@ async function driveAgregarArchivos(input) {
   if(!files.length) return;
   const statusEl = document.getElementById('drive-upload-status');
   statusEl.style.display = 'block';
-  statusEl.textContent = '⏳ Preparando carpetas en Drive...';
+  statusEl.textContent = '⏳ Preparando carpeta en Drive...';
   try {
     const folders     = await driveEnsurePacienteFolder(pacId);
-    const folderId    = folders[currentArchivoTab];
+    const folderId    = folders.folderId;
     const accessToken = await driveGetToken();
     let subidos = 0;
     for(const file of files) {
@@ -1805,21 +1800,20 @@ async function driveAgregarArchivos(input) {
       const uploaded = await driveUploadFile(file, folderId, accessToken);
       await driveMakePublic(uploaded.id, accessToken);
       const viewUrl = `https://drive.google.com/file/d/${uploaded.id}/view`;
-      // Guardar link en Firebase (colección "archivos")
       const docRef   = db.collection('archivos').doc(pacId);
       const existing = await docRef.get();
       const arData   = existing.exists ? existing.data() : {};
-      const lista    = arData[currentArchivoTab] || [];
+      const lista    = arData.fotos || [];
       lista.push({ url: viewUrl, name: file.name, driveId: uploaded.id,
                    mimeType: file.type, subido: Date.now() });
-      arData[currentArchivoTab] = lista;
+      arData.fotos = lista;
       await docRef.set(arData);
       subidos++;
     }
     statusEl.style.display = 'none';
     input.value = '';
     cargarFotos();
-    toast(`✅ ${subidos} archivo(s) guardado(s) en Drive`);
+    toast(`✅ ${subidos} foto(s) guardada(s) en Drive`);
   } catch(e) {
     statusEl.style.display = 'none';
     input.value = '';
@@ -1828,8 +1822,8 @@ async function driveAgregarArchivos(input) {
   }
 }
 
-async function borrarArchivoDrive(pacId, driveId, tipo, idx) {
-  if(!confirm('¿Eliminar este archivo de Drive y Firebase?')) return;
+async function borrarArchivoDrive(pacId, driveId, idx) {
+  if(!confirm('¿Eliminar esta foto de Drive y Firebase?')) return;
   try {
     if(driveId && gcalReady) {
       await fetch(`${DRIVE_API}?action=drive-delete&fileId=${driveId}`, { method: 'DELETE' });
@@ -1838,11 +1832,11 @@ async function borrarArchivoDrive(pacId, driveId, tipo, idx) {
     const existing = await docRef.get();
     if(existing.exists) {
       const arData = existing.data();
-      arData[tipo] = (arData[tipo] || []).filter((_,i) => i !== idx);
+      arData.fotos = (arData.fotos || []).filter((_,i) => i !== idx);
       await docRef.set(arData);
     }
     cargarFotos();
-    toast('🗑️ Archivo eliminado');
+    toast('🗑️ Foto eliminada');
   } catch(e) { toast('❌ Error al eliminar: ' + e.message); }
 }
 
@@ -1860,12 +1854,38 @@ async function borrarFoto(pacId, publicId, idx) {
   } catch(e) { toast('❌ Error al eliminar'); }
 }
 
-function verFoto(url) {
-  const overlay = document.createElement('div');
-  overlay.style = 'position:fixed;inset:0;background:rgba(0,0,0,.9);z-index:9998;display:flex;align-items:center;justify-content:center;cursor:zoom-out';
-  overlay.innerHTML = `<img src="${url}" style="max-width:95vw;max-height:95vh;border-radius:8px;object-fit:contain">`;
-  overlay.onclick = () => document.body.removeChild(overlay);
-  document.body.appendChild(overlay);
+let _visorIdx = 0;
+function abrirVisor(idx) {
+  _visorIdx = idx;
+  _renderVisor();
+  const v = document.getElementById('visor-fotos');
+  if(v) v.style.display = 'flex';
+  document.addEventListener('keydown', _visorKeyHandler);
+}
+function _renderVisor() {
+  const f = _fotosActuales[_visorIdx];
+  if(!f) return;
+  const img = document.getElementById('visor-img');
+  const cnt = document.getElementById('visor-counter');
+  if(img) {
+    img.src = `https://drive.google.com/thumbnail?id=${f.driveId}&sz=w1600`;
+    img.style.display = '';
+  }
+  if(cnt) cnt.textContent = `${_visorIdx + 1} / ${_fotosActuales.length}`;
+  document.getElementById('visor-prev').style.visibility = _visorIdx > 0 ? 'visible' : 'hidden';
+  document.getElementById('visor-next').style.visibility = _visorIdx < _fotosActuales.length - 1 ? 'visible' : 'hidden';
+}
+function visorPrev() { if(_visorIdx > 0) { _visorIdx--; _renderVisor(); } }
+function visorNext() { if(_visorIdx < _fotosActuales.length - 1) { _visorIdx++; _renderVisor(); } }
+function visorCerrar() {
+  const v = document.getElementById('visor-fotos');
+  if(v) v.style.display = 'none';
+  document.removeEventListener('keydown', _visorKeyHandler);
+}
+function _visorKeyHandler(e) {
+  if(e.key === 'ArrowLeft') visorPrev();
+  else if(e.key === 'ArrowRight') visorNext();
+  else if(e.key === 'Escape') visorCerrar();
 }
 
 // ── PAGOS ──────────────────────────────────────────────────────────────────
@@ -3255,16 +3275,128 @@ async function gcalSyncAhora() {
     c.fecha > hoy || (c.fecha === hoy && (c.hora || '00:00') >= horaActual)
   );
   if(citasFuturas.length === 0) { toast('ℹ️ No hay citas futuras que sincronizar'); gcalLoadEventsHoy(); return; }
+  gcalSetStatus('Sincronizando…', 'loading');
+  // Sync nuevas citas pendientes
   const pendientes = citasFuturas.filter(c => !c.gcalEventId);
-  gcalSetStatus('Sincronizando ' + pendientes.length + ' cita' + (pendientes.length !== 1 ? 's' : '') + '…', 'loading');
   let exitos = 0, fallos = 0;
   for(const c of pendientes) {
     try { await gcalSyncCita(c); exitos++; } catch(e) { fallos++; }
   }
+  // Sync eliminaciones: detectar citas borradas en GCal → eliminar en Firebase
+  try {
+    const resp  = await fetch(`${GCAL_API}?action=events-future`);
+    const gData = await resp.json();
+    const gcalIds = new Set((gData.items || []).map(e => e.id));
+    for(const c of citasFuturas.filter(x => x.gcalEventId)) {
+      if(!gcalIds.has(c.gcalEventId)) {
+        await fbDel('citas', c.id);
+        DB.citas = DB.citas.filter(x => x.id !== c.id);
+      }
+    }
+  } catch(e) { console.warn('[gcal sync delete]', e.message); }
   const msg = exitos + ' enviada' + (exitos !== 1 ? 's' : '') + (fallos > 0 ? ' · ' + fallos + ' error' : '');
   gcalSetStatus(msg, fallos > 0 && exitos === 0 ? 'error' : 'ok');
   gcalLoadEventsHoy();
+  renderCalendario();
 }
+
+
+// ── EDITOR DE FOTO ─────────────────────────────────────────────────────────
+let _editorFile = null;
+let _editorRotacion = 0;
+let _editorImg = null;
+
+function abrirEditorFoto(input) {
+  const files = Array.from(input.files);
+  if(!files.length) return;
+  _editorFile = files[0];
+  _editorRotacion = 0;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const img = new Image();
+    img.onload = () => {
+      _editorImg = img;
+      _editorDibujar();
+      openModal('modal-foto-editor');
+    };
+    img.src = e.target.result;
+  };
+  reader.readAsDataURL(_editorFile);
+  input.value = '';
+}
+
+function _editorDibujar() {
+  const canvas = document.getElementById('editor-canvas');
+  const ctx    = canvas.getContext('2d');
+  const rad    = _editorRotacion * Math.PI / 180;
+  const sin    = Math.abs(Math.sin(rad));
+  const cos    = Math.abs(Math.cos(rad));
+  const w      = _editorImg.width * cos + _editorImg.height * sin;
+  const h      = _editorImg.width * sin + _editorImg.height * cos;
+  canvas.width  = w;
+  canvas.height = h;
+  ctx.save();
+  ctx.translate(w / 2, h / 2);
+  ctx.rotate(rad);
+  ctx.drawImage(_editorImg, -_editorImg.width / 2, -_editorImg.height / 2);
+  ctx.restore();
+}
+
+function editorRotar(grados) {
+  _editorRotacion = (_editorRotacion + grados + 360) % 360;
+  _editorDibujar();
+}
+
+async function editorSubir() {
+  const pacId = document.getElementById('select-paciente-fotos')?.value || pacienteActivo;
+  if(!pacId) { toast('⚠️ Selecciona un paciente'); return; }
+  if(!gcalReady) { toast('⚠️ Conecta Google para subir fotos'); return; }
+  const canvas  = document.getElementById('editor-canvas');
+  const statusEl = document.getElementById('drive-upload-status');
+  closeModal('modal-foto-editor');
+  statusEl.style.display = 'block';
+  statusEl.textContent = '⏳ Subiendo foto…';
+  try {
+    const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92));
+    const nombre = (_editorFile?.name || 'foto.jpg').replace(/\.[^.]+$/, '') + '.jpg';
+    const file   = new File([blob], nombre, { type: 'image/jpeg' });
+    const folders     = await driveEnsurePacienteFolder(pacId);
+    const folderId    = folders.folderId;
+    const accessToken = await driveGetToken();
+    const uploaded    = await driveUploadFile(file, folderId, accessToken);
+    await driveMakePublic(uploaded.id, accessToken);
+    const viewUrl = `https://drive.google.com/file/d/${uploaded.id}/view`;
+    const docRef   = db.collection('archivos').doc(pacId);
+    const existing = await docRef.get();
+    const arData   = existing.exists ? existing.data() : {};
+    const lista    = arData.fotos || [];
+    lista.push({ url: viewUrl, name: nombre, driveId: uploaded.id,
+                 mimeType: 'image/jpeg', subido: Date.now() });
+    arData.fotos = lista;
+    await docRef.set(arData);
+    statusEl.style.display = 'none';
+    cargarFotos();
+    toast('✅ Foto guardada en Drive');
+  } catch(e) {
+    statusEl.style.display = 'none';
+    toast('❌ Error: ' + e.message);
+    console.error('[editorSubir]', e);
+  }
+}
+
+// ── Visor swipe táctil ──────────────────────────────────────────────────────
+(function() {
+  let tx = 0;
+  document.addEventListener('touchstart', e => {
+    if(!document.getElementById('visor-fotos') || document.getElementById('visor-fotos').style.display === 'none') return;
+    tx = e.touches[0].clientX;
+  }, { passive: true });
+  document.addEventListener('touchend', e => {
+    if(!document.getElementById('visor-fotos') || document.getElementById('visor-fotos').style.display === 'none') return;
+    const dx = e.changedTouches[0].clientX - tx;
+    if(Math.abs(dx) > 50) { if(dx < 0) visorNext(); else visorPrev(); }
+  }, { passive: true });
+})();
 
 // Al cargar la página: detectar callback OAuth o verificar estado
 window.addEventListener('DOMContentLoaded', () => {
@@ -3303,5 +3435,35 @@ cargarCatalogo();
 </script>
 <!-- Google API para Google Calendar -->
 <!-- Google API scripts eliminados: ahora la integración va por Netlify Functions -->
+
+<!-- VISOR DE FOTOS -->
+<div id="visor-fotos" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.95);z-index:9999;align-items:center;justify-content:center;flex-direction:column">
+  <button onclick="visorCerrar()" style="position:absolute;top:16px;right:20px;background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:50%;width:40px;height:40px;font-size:1.4rem;cursor:pointer;line-height:1">✕</button>
+  <div id="visor-counter" style="position:absolute;top:20px;left:0;right:0;text-align:center;color:rgba(255,255,255,.7);font-size:.85rem;pointer-events:none"></div>
+  <button id="visor-prev" onclick="visorPrev()" style="position:absolute;left:12px;background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:50%;width:48px;height:48px;font-size:1.6rem;cursor:pointer;line-height:1">‹</button>
+  <img id="visor-img" src="" alt="" style="max-width:92vw;max-height:88vh;object-fit:contain;border-radius:6px;user-select:none" draggable="false">
+  <button id="visor-next" onclick="visorNext()" style="position:absolute;right:12px;background:rgba(255,255,255,.15);color:#fff;border:none;border-radius:50%;width:48px;height:48px;font-size:1.6rem;cursor:pointer;line-height:1">›</button>
+</div>
+
+<!-- EDITOR DE FOTO -->
+<div id="modal-foto-editor" class="modal-overlay" style="z-index:10000">
+  <div class="modal" style="max-width:500px;width:95vw">
+    <div class="modal-header">
+      <h3>Editar foto</h3>
+      <button class="btn-close" onclick="closeModal('modal-foto-editor')">✕</button>
+    </div>
+    <div style="text-align:center;margin-bottom:12px">
+      <canvas id="editor-canvas" style="max-width:100%;max-height:55vh;border-radius:8px;border:1.5px solid var(--border)"></canvas>
+    </div>
+    <div style="display:flex;gap:8px;flex-wrap:wrap;justify-content:center;margin-bottom:16px">
+      <button class="btn btn-secondary" onclick="editorRotar(-90)">↺ Rotar izq.</button>
+      <button class="btn btn-secondary" onclick="editorRotar(90)">↻ Rotar der.</button>
+    </div>
+    <div style="display:flex;gap:8px;justify-content:flex-end">
+      <button class="btn btn-secondary" onclick="closeModal('modal-foto-editor')">Cancelar</button>
+      <button class="btn btn-primary" onclick="editorSubir()">⬆️ Subir foto</button>
+    </div>
+  </div>
+</div>
 </body>
 </html>
