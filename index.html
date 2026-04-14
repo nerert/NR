@@ -3390,8 +3390,8 @@ function _editorDibujarConCrop() {
   ctx.restore();
 }
 
-function editorAplicarRecorte() {
-  if(!_cropRect || _cropRect.w < 4 || _cropRect.h < 4) { toast('⚠️ Selecciona un área'); return; }
+async function editorAplicarRecorte() {
+  if(!_cropRect || _cropRect.w < 4 || _cropRect.h < 4) { toast('⚠️ Selecciona un área'); return false; }
   _editorDibujar(); // redraw sin overlay
   const c = document.getElementById('editor-canvas');
   const ctx = c.getContext('2d');
@@ -3399,9 +3399,12 @@ function editorAplicarRecorte() {
   const imageData = ctx.getImageData(x, y, w, h);
   const tmp = document.createElement('canvas'); tmp.width=w; tmp.height=h;
   tmp.getContext('2d').putImageData(imageData, 0, 0);
-  const newImg = new Image();
-  newImg.onload = () => { _editorImg=newImg; _editorRotacion=0; editorCancelarRecorte(); };
-  newImg.src = tmp.toDataURL();
+  await new Promise(resolve => {
+    const newImg = new Image();
+    newImg.onload = () => { _editorImg=newImg; _editorRotacion=0; editorCancelarRecorte(); resolve(); };
+    newImg.src = tmp.toDataURL();
+  });
+  return true;
 }
 
 function editorCancelarRecorte() {
@@ -3417,6 +3420,12 @@ async function editorSubir() {
   const pacId = document.getElementById('select-paciente-fotos')?.value || pacienteActivo;
   if(!pacId) { toast('⚠️ Selecciona un paciente'); return; }
   if(!gcalReady) { toast('⚠️ Conecta Google para subir fotos'); return; }
+  // Si hay selección de recorte activa, aplicarla automáticamente antes de subir
+  if(_cropMode && _cropRect && _cropRect.w >= 4 && _cropRect.h >= 4) {
+    await editorAplicarRecorte();
+  } else if(_cropMode) {
+    editorCancelarRecorte();
+  }
   const canvas  = document.getElementById('editor-canvas');
   const statusEl = document.getElementById('drive-upload-status');
   closeModal('modal-foto-editor');
