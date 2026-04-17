@@ -140,6 +140,7 @@ th{font-weight:700;color:var(--ink2);font-size:0.78rem;text-transform:uppercase;
   </div>
   <div class="nav-item active" onclick="showPage('dashboard')"><span class="nav-icon">🏠</span> Dashboard</div>
   <div class="nav-item" onclick="showPage('pacientes')"><span class="nav-icon">👤</span> Pacientes</div>
+  <div style="height:1px;background:var(--border);margin:6px 8px"></div>
   <div class="nav-item" onclick="showPage('odontograma')"><span class="nav-icon">🦷</span> Odontograma</div>
   <div class="nav-item" onclick="showPage('historia')"><span class="nav-icon">📋</span> Historia Clínica</div>
   <div class="nav-item" onclick="showPage('notas')"><span class="nav-icon">📝</span> Notas Clínicas</div>
@@ -148,8 +149,18 @@ th{font-weight:700;color:var(--ink2);font-size:0.78rem;text-transform:uppercase;
   <div class="nav-item" onclick="showPage('citas')"><span class="nav-icon">📅</span> Agenda</div>
   <div class="nav-item" onclick="showPage('fotos')"><span class="nav-icon">📷</span> Fotos</div>
   <div class="nav-item" onclick="showPage('pagos')"><span class="nav-icon">💳</span> Pagos</div>
+  <div style="height:1px;background:var(--border);margin:6px 8px"></div>
   <div class="nav-item" onclick="showPage('catalogo')"><span class="nav-icon">⚙️</span> Catálogo</div>
   <div class="nav-item" onclick="showPage('respaldo')"><span class="nav-icon">💾</span> Respaldo</div>
+  <div style="flex:1"></div>
+  <div style="padding:10px 8px;border-top:1px solid var(--border)">
+    <div id="sidebar-paciente" style="display:none;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;background:var(--accent-light);margin-bottom:6px;font-size:.78rem;color:var(--accent);font-weight:600;cursor:pointer" onclick="showPage('pacientes')">
+      <span>👤</span><span id="sidebar-pac-nombre" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
+    </div>
+    <div id="sidebar-gcal-btn" onclick="gcalToggleAuth()" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:.78rem;font-weight:600;color:var(--ink2);transition:background .15s" onmouseover="this.style.background='var(--accent-light)'" onmouseout="this.style.background=''">
+      <span id="sidebar-gcal-dot">🔴</span><span id="sidebar-gcal-label">Conectar Google</span>
+    </div>
+  </div>
 </nav>
 
 <main class="main">
@@ -170,6 +181,10 @@ th{font-weight:700;color:var(--ink2);font-size:0.78rem;text-transform:uppercase;
     <div><h2>Dashboard</h2><p id="dash-bienvenida">Dra. Karen López Venzor 👋</p></div>
   </div>
   <div class="dash-grid" id="dash-stats"></div>
+  <div class="card" style="margin-bottom:16px">
+    <h3 style="margin-bottom:12px;color:var(--accent)">🎯 Próximo paciente</h3>
+    <div id="dash-paciente-foco"><p style="color:var(--ink2);font-size:.9rem;margin:0">Sin próximas citas</p></div>
+  </div>
   <div class="card" style="margin-bottom:16px">
     <h3 style="margin-bottom:12px;color:var(--accent)">📅 Citas de hoy</h3>
     <div id="dash-citas-hoy"><p style="color:var(--ink2);font-size:.9rem">Sin citas para hoy</p></div>
@@ -795,6 +810,10 @@ function setPacienteActivo(id) {
   cargarHistoria(); cargarNotas(); cargarPresupuestos(); cargarFotos(); renderPagos(); cargarRuta(); renderRutaSelect();
   renderPacientes();
   renderTablaOdo(id);
+  // update sidebar patient indicator
+  const spEl = document.getElementById('sidebar-paciente');
+  const spNombre = document.getElementById('sidebar-pac-nombre');
+  if(spEl && spNombre) { spNombre.textContent = nombre; spEl.style.display='flex'; }
 }
 
 function actualizarSelectsPacientes() {
@@ -2218,11 +2237,36 @@ function renderDashboard() {
   } else if(banner) {
     banner.style.display = 'none';
   }
+  // Pending payments across all patients
+  const totalPendiente = DB.presupuestos.reduce((sum, pr) => {
+    const {total} = calcDescuento(pr);
+    const pagado = DB.pagos.filter(p => p.presupuestoId === pr.id).reduce((s,p)=>s+(p.monto||0),0);
+    return sum + Math.max(0, total - pagado);
+  }, 0);
   stats.innerHTML = [
     {num:DB.pacientes.length, label:'Pacientes'},
     {num:citasHoy, label:'Citas hoy'},
-    {num:DB.presupuestos.length, label:'Presupuestos'}
-  ].map(s=>`<div class="stat-card"><div class="stat-num">${s.num}</div><div class="stat-label">${s.label}</div></div>`).join('');
+    {num:DB.presupuestos.length, label:'Presupuestos'},
+    {num:'$'+totalPendiente.toLocaleString('es-MX',{maximumFractionDigits:0}), label:'Saldo pendiente'}
+  ].map(s=>`<div class="stat-card"><div class="stat-num" style="font-size:${typeof s.num==='string'?'1.1rem':'1.8rem'}">${s.num}</div><div class="stat-label">${s.label}</div></div>`).join('');
+  // Patient in focus: next upcoming appointment
+  const ahora = new Date().toISOString().slice(0,16).replace('T',' ');
+  const proxCita = DB.citas.filter(c=>c.fecha && c.fecha+' '+(c.hora||'00:00') >= ahora).sort((a,b)=>(a.fecha+a.hora).localeCompare(b.fecha+b.hora))[0];
+  const focusEl = document.getElementById('dash-paciente-foco');
+  if(focusEl) {
+    if(proxCita) {
+      const pf = DB.pacientes.find(p=>p.id===proxCita.pacienteId);
+      const nombreFoco = pf ? pf.nombre+' '+pf.apellido : '—';
+      const fechaFoco = new Date(proxCita.fecha+'T'+(proxCita.hora||'00:00')).toLocaleDateString('es-MX',{weekday:'short',day:'numeric',month:'short'}) + (proxCita.hora?' · '+proxCita.hora:'');
+      focusEl.innerHTML = `<div style="display:flex;align-items:center;gap:12px">
+        <div style="background:var(--accent);color:#fff;border-radius:50%;width:42px;height:42px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0">👤</div>
+        <div><div style="font-weight:700;font-size:.95rem">${nombreFoco}</div><div style="font-size:.82rem;color:var(--ink2);margin-top:2px">📅 ${fechaFoco}</div><div style="font-size:.82rem;color:var(--ink2)">${proxCita.motivo||''}</div></div>
+        <button onclick="setPacienteActivo('${proxCita.pacienteId}')" style="margin-left:auto;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:7px 14px;cursor:pointer;font-size:.82rem;font-weight:700">Ver →</button>
+      </div>`;
+    } else {
+      focusEl.innerHTML = '<p style="color:var(--ink2);font-size:.9rem;margin:0">Sin próximas citas agendadas</p>';
+    }
+  }
 
   // Citas hoy
   const dasHoy = document.getElementById('dash-citas-hoy');
@@ -3148,6 +3192,7 @@ async function gcalToggleAuth() {
     document.getElementById('gcal-hoy-card').style.display = 'none';
     document.getElementById('gcal-sync-opt').style.display = 'none';
     gcalSetStatus('Google Calendar desconectado.', 'info', '');
+    gcalUpdateSidebar(false);
     return;
   }
   gcalSetStatus('Redirigiendo a Google…', 'loading');
@@ -3165,7 +3210,17 @@ function gcalOnConnected(loadEvents = true) {
   document.getElementById('gcal-sync-btn').style.display = '';
   document.getElementById('gcal-sync-opt').style.display = '';
   gcalSetStatus('Conectado a Google Calendar', 'ok');
+  gcalUpdateSidebar(true);
   if(loadEvents) gcalLoadEventsHoy();
+}
+
+function gcalUpdateSidebar(connected) {
+  const dot   = document.getElementById('sidebar-gcal-dot');
+  const label = document.getElementById('sidebar-gcal-label');
+  const uploadBtn = document.getElementById('btn-drive-upload');
+  if(dot)   dot.textContent   = connected ? '🟢' : '🔴';
+  if(label) label.textContent = connected ? 'Google conectado' : 'Conectar Google';
+  if(uploadBtn) { uploadBtn.style.opacity = connected ? '' : '0.45'; uploadBtn.style.pointerEvents = connected ? '' : 'none'; }
 }
 
 async function gcalLoadEventsHoy() {
@@ -3376,7 +3431,22 @@ function editorActivarRecorte() {
 
 function _editorDibujarConCrop() {
   _editorDibujar();
-  if(!_cropRect || _cropRect.w < 4 || _cropRect.h < 4) return;
+  const c2 = document.getElementById('editor-canvas');
+  const ctx2 = c2.getContext('2d');
+  if(!_cropRect || _cropRect.w < 4 || _cropRect.h < 4) {
+    // Show instruction overlay
+    ctx2.save();
+    ctx2.fillStyle = 'rgba(0,0,0,0.32)';
+    ctx2.fillRect(0, 0, c2.width, c2.height);
+    ctx2.fillStyle = '#fff';
+    ctx2.font = 'bold ' + Math.round(c2.width * 0.045) + 'px sans-serif';
+    ctx2.textAlign = 'center';
+    ctx2.shadowColor = 'rgba(0,0,0,0.6)';
+    ctx2.shadowBlur = 6;
+    ctx2.fillText('✂️ Arrastra para seleccionar el recorte', c2.width/2, c2.height/2);
+    ctx2.restore();
+    return;
+  }
   const c = document.getElementById('editor-canvas');
   const ctx = c.getContext('2d');
   ctx.save();
