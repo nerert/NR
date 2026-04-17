@@ -1689,71 +1689,62 @@ const CLOUDINARY_PRESET = 'kndental';
 const _driveFolderCache = {};
 let _fotosActuales = [];
 
-function cargarFotos() {
+async function cargarFotos() {
   const pacId = document.getElementById('select-paciente-fotos')?.value || pacienteActivo;
   if(!pacId) return;
   const pac = DB.pacientes.find(p=>p.id===pacId);
+  const pacNombre = pac ? pac.nombre+' '+pac.apellido : '';
   const archivosGrid = document.getElementById('archivos-grid');
   if(!archivosGrid) return;
   archivosGrid.innerHTML = '<p style="color:var(--ink2);padding:8px 0">⏳ Cargando fotos…</p>';
-  db.collection('archivos').doc(pacId).get().then(doc => {
+  try {
+    const doc = await db.collection('archivos').doc(pacId).get();
     const arData = doc.exists ? doc.data() : {};
-    const lista  = arData.fotos || [];
-    _fotosActuales = lista;
-    if(!lista.length) {
-      archivosGrid.innerHTML = '<p style="color:var(--ink2);padding:8px 0">Sin fotos en Drive para este paciente.</p>';
-      cargarFotosOrto(pacId, pac ? pac.nombre+' '+pac.apellido : '');
+    const listaFirebase = (arData.fotos || []).map(f=>({...f, _src:'firebase'}));
+    const firebaseIds = new Set(listaFirebase.map(f=>f.driveId).filter(Boolean));
+    // Fetch Drive photos from both folders in parallel (only if connected)
+    let drivePacFiles = [], driveOrtoFiles = [];
+    if(gcalReady && pacNombre) {
+      [drivePacFiles, driveOrtoFiles] = await Promise.all([
+        fetchDriveFolder(pacNombre, 'Pacientes'),
+        fetchDriveFolder(pacNombre, 'Pacientes Orto')
+      ]);
+    }
+    const driveExtras = [
+      ...drivePacFiles.filter(f=>!firebaseIds.has(f.id)).map(f=>({driveId:f.id, name:f.name, _src:'drive'})),
+      ...driveOrtoFiles.filter(f=>!firebaseIds.has(f.id)).map(f=>({driveId:f.id, name:f.name, _src:'orto'}))
+    ];
+    _fotosActuales = [...listaFirebase, ...driveExtras];
+    if(!_fotosActuales.length) {
+      archivosGrid.innerHTML = '<p style="color:var(--ink2);padding:8px 0">Sin fotos para este paciente.</p>';
       return;
     }
-    archivosGrid.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px">`
-      + lista.map((f, i) => {
-        const esImagen = /\.(jpe?g|png|gif|webp|bmp|svg)$/i.test(f.name || '');
-        const thumb = esImagen
-          ? `<img src="https://drive.google.com/thumbnail?id=${f.driveId}&sz=w300" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px 8px 0 0;display:block;cursor:pointer" onclick="abrirVisor(${i})">`
-          : `<div style="width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:3rem;cursor:pointer" onclick="abrirVisor(${i})">🖼️</div>`;
-        return `<div style="position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1.5px solid var(--border)">
-          ${thumb}
-          <p style="font-size:.72rem;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:6px 8px">${f.name || 'foto'}</p>
-          <button onclick="borrarArchivoDrive('${pacId}','${f.driveId}',${i})" title="Eliminar" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">🗑️</button>
-        </div>`;
-      }).join('') + '</div>';
-    cargarFotosOrto(pacId, pac ? pac.nombre+' '+pac.apellido : '');
-  }).catch(() => {
-    if(archivosGrid) archivosGrid.innerHTML = '<p style="color:var(--ink2)">Error al cargar fotos</p>';
-    const pac2 = DB.pacientes.find(p=>p.id===pacId);
-    cargarFotosOrto(pacId, pac2 ? pac2.nombre+' '+pac2.apellido : '');
-  });
-}
-
-async function cargarFotosOrto(pacId, pacNombre) {
-  if(!gcalReady || !pacNombre) return;
-  const old = document.getElementById('fotos-orto-section');
-  if(old) old.remove();
-  try {
-    const resp = await fetch(`${DRIVE_API}?action=drive-list-folder&pacienteNombre=${encodeURIComponent(pacNombre)}&carpeta=Pacientes+Orto`);
-    if(!resp.ok) return;
-    const { files } = await resp.json();
-    if(!files || !files.length) return;
-    const archivosGrid = document.getElementById('archivos-grid');
-    if(!archivosGrid) return;
-    const section = document.createElement('div');
-    section.id = 'fotos-orto-section';
-    section.style.marginTop = '16px';
-    section.innerHTML = '<h4 style="color:var(--accent);margin-bottom:10px;font-size:.9rem">🦷 Ortodoncia (Drive)</h4>'
-      + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">'
-      + files.map(f => {
-          const esImagen = /image/.test(f.mimeType||'');
-          const thumb = esImagen
-            ? `<img src="https://drive.google.com/thumbnail?id=${f.id}&sz=w300" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px 8px 0 0;display:block">`
-            : `<div style="width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:3rem">🖼️</div>`;
-          return `<a href="https://drive.google.com/file/d/${f.id}/view" target="_blank" style="display:block;border-radius:10px;overflow:hidden;background:var(--surface);border:1.5px solid var(--border);text-decoration:none">
+    archivosGrid.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px">'
+      + _fotosActuales.map((f, i) => {
+          const thumb = `<img src="https://drive.google.com/thumbnail?id=${f.driveId}&sz=w300" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px 8px 0 0;display:block;cursor:pointer" onclick="abrirVisor(${i})">`;
+          const badge = f._src === 'firebase'
+            ? `<button onclick="borrarArchivoDrive('${pacId}','${f.driveId}')" title="Eliminar" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">🗑️</button>`
+            : `<span title="${f._src==='orto'?'Ortodoncia':'Drive'}" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.45);color:#fff;border-radius:10px;padding:2px 5px;font-size:.65rem">${f._src==='orto'?'🦷':'📁'}</span>`;
+          return `<div style="position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1.5px solid var(--border)">
             ${thumb}
             <p style="font-size:.72rem;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:6px 8px">${f.name||'foto'}</p>
-          </a>`;
+            ${badge}
+          </div>`;
         }).join('')
       + '</div>';
-    archivosGrid.after(section);
-  } catch(e) { console.warn('[OrtoFotos]', e); }
+  } catch(e) {
+    console.error('[cargarFotos]', e);
+    if(archivosGrid) archivosGrid.innerHTML = '<p style="color:var(--ink2)">Error al cargar fotos</p>';
+  }
+}
+
+async function fetchDriveFolder(pacNombre, carpeta) {
+  try {
+    const resp = await fetch(`${DRIVE_API}?action=drive-list-folder&pacienteNombre=${encodeURIComponent(pacNombre)}&carpeta=${encodeURIComponent(carpeta)}`);
+    if(!resp.ok) return [];
+    const { files } = await resp.json();
+    return files || [];
+  } catch(e) { return []; }
 }
 
 async function agregarFotos(input) {
@@ -1877,7 +1868,7 @@ async function driveAgregarArchivos(input) {
   }
 }
 
-async function borrarArchivoDrive(pacId, driveId, idx) {
+async function borrarArchivoDrive(pacId, driveId) {
   if(!confirm('¿Eliminar esta foto de Drive y Firebase?')) return;
   try {
     if(driveId && gcalReady) {
@@ -1887,7 +1878,7 @@ async function borrarArchivoDrive(pacId, driveId, idx) {
     const existing = await docRef.get();
     if(existing.exists) {
       const arData = existing.data();
-      arData.fotos = (arData.fotos || []).filter((_,i) => i !== idx);
+      arData.fotos = (arData.fotos || []).filter(f => f.driveId !== driveId);
       await docRef.set(arData);
     }
     cargarFotos();
@@ -3260,7 +3251,7 @@ function gcalUpdateSidebar(connected) {
   const uploadBtn = document.getElementById('btn-drive-upload');
   if(dot)   dot.textContent   = connected ? '🟢' : '🔴';
   if(label) label.textContent = connected ? 'Google conectado' : 'Conectar Google';
-  if(uploadBtn) { uploadBtn.style.opacity = connected ? '' : '0.45'; uploadBtn.style.pointerEvents = connected ? '' : 'none'; }
+  if(uploadBtn) uploadBtn.style.opacity = connected ? '' : '0.5';
 }
 
 async function gcalLoadEventsHoy() {
