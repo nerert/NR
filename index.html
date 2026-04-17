@@ -154,7 +154,7 @@ th{font-weight:700;color:var(--ink2);font-size:0.78rem;text-transform:uppercase;
   <div class="nav-item" onclick="showPage('respaldo')"><span class="nav-icon">💾</span> Respaldo</div>
   <div style="flex:1"></div>
   <div style="padding:10px 8px;border-top:1px solid var(--border)">
-    <div id="sidebar-paciente" style="display:none;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;background:var(--accent-light);margin-bottom:6px;font-size:.78rem;color:var(--accent);font-weight:600;cursor:pointer" onclick="showPage('pacientes')">
+    <div id="sidebar-paciente" style="display:none;align-items:center;gap:6px;padding:7px 10px;border-radius:8px;background:var(--accent-light);margin-bottom:6px;font-size:.78rem;color:var(--accent);font-weight:600;cursor:pointer" onclick="if(pacienteActivo)irAPaciente(pacienteActivo)" title="Ver historia clínica">
       <span>👤</span><span id="sidebar-pac-nombre" style="overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1"></span>
     </div>
     <div id="sidebar-gcal-btn" onclick="gcalToggleAuth()" style="display:flex;align-items:center;gap:8px;padding:7px 10px;border-radius:8px;cursor:pointer;font-size:.78rem;font-weight:600;color:var(--ink2);transition:background .15s" onmouseover="this.style.background='var(--accent-light)'" onmouseout="this.style.background=''">
@@ -1692,6 +1692,7 @@ let _fotosActuales = [];
 function cargarFotos() {
   const pacId = document.getElementById('select-paciente-fotos')?.value || pacienteActivo;
   if(!pacId) return;
+  const pac = DB.pacientes.find(p=>p.id===pacId);
   const archivosGrid = document.getElementById('archivos-grid');
   if(!archivosGrid) return;
   archivosGrid.innerHTML = '<p style="color:var(--ink2);padding:8px 0">⏳ Cargando fotos…</p>';
@@ -1701,6 +1702,7 @@ function cargarFotos() {
     _fotosActuales = lista;
     if(!lista.length) {
       archivosGrid.innerHTML = '<p style="color:var(--ink2);padding:8px 0">Sin fotos en Drive para este paciente.</p>';
+      cargarFotosOrto(pacId, pac ? pac.nombre+' '+pac.apellido : '');
       return;
     }
     archivosGrid.innerHTML = `<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px">`
@@ -1715,9 +1717,43 @@ function cargarFotos() {
           <button onclick="borrarArchivoDrive('${pacId}','${f.driveId}',${i})" title="Eliminar" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">🗑️</button>
         </div>`;
       }).join('') + '</div>';
+    cargarFotosOrto(pacId, pac ? pac.nombre+' '+pac.apellido : '');
   }).catch(() => {
     if(archivosGrid) archivosGrid.innerHTML = '<p style="color:var(--ink2)">Error al cargar fotos</p>';
+    const pac2 = DB.pacientes.find(p=>p.id===pacId);
+    cargarFotosOrto(pacId, pac2 ? pac2.nombre+' '+pac2.apellido : '');
   });
+}
+
+async function cargarFotosOrto(pacId, pacNombre) {
+  if(!gcalReady || !pacNombre) return;
+  const old = document.getElementById('fotos-orto-section');
+  if(old) old.remove();
+  try {
+    const resp = await fetch(`${DRIVE_API}?action=drive-list-folder&pacienteNombre=${encodeURIComponent(pacNombre)}&carpeta=Pacientes+Orto`);
+    if(!resp.ok) return;
+    const { files } = await resp.json();
+    if(!files || !files.length) return;
+    const archivosGrid = document.getElementById('archivos-grid');
+    if(!archivosGrid) return;
+    const section = document.createElement('div');
+    section.id = 'fotos-orto-section';
+    section.style.marginTop = '16px';
+    section.innerHTML = '<h4 style="color:var(--accent);margin-bottom:10px;font-size:.9rem">🦷 Ortodoncia (Drive)</h4>'
+      + '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px">'
+      + files.map(f => {
+          const esImagen = /image/.test(f.mimeType||'');
+          const thumb = esImagen
+            ? `<img src="https://drive.google.com/thumbnail?id=${f.id}&sz=w300" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px 8px 0 0;display:block">`
+            : `<div style="width:100%;aspect-ratio:1;display:flex;align-items:center;justify-content:center;font-size:3rem">🖼️</div>`;
+          return `<a href="https://drive.google.com/file/d/${f.id}/view" target="_blank" style="display:block;border-radius:10px;overflow:hidden;background:var(--surface);border:1.5px solid var(--border);text-decoration:none">
+            ${thumb}
+            <p style="font-size:.72rem;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:6px 8px">${f.name||'foto'}</p>
+          </a>`;
+        }).join('')
+      + '</div>';
+    archivosGrid.after(section);
+  } catch(e) { console.warn('[OrtoFotos]', e); }
 }
 
 async function agregarFotos(input) {
@@ -2223,6 +2259,16 @@ function irAAgenda() {
   renderCalendario();
 }
 
+function irAPaciente(id) {
+  if(!id) return;
+  setPacienteActivo(id);
+  document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
+  document.querySelectorAll('.nav-item').forEach(n=>n.classList.remove('active'));
+  document.getElementById('page-historia').classList.add('active');
+  document.querySelectorAll('.nav-item').forEach(n=>{ if(n.textContent.includes('Historia')) n.classList.add('active'); });
+  cargarHistoria();
+}
+
 function renderDashboard() {
   const stats = document.getElementById('dash-stats'); if(!stats) return;
   const hoy = new Date().toISOString().slice(0,10);
@@ -2238,17 +2284,11 @@ function renderDashboard() {
     banner.style.display = 'none';
   }
   // Pending payments across all patients
-  const totalPendiente = DB.presupuestos.reduce((sum, pr) => {
-    const {total} = calcDescuento(pr);
-    const pagado = DB.pagos.filter(p => p.presupuestoId === pr.id).reduce((s,p)=>s+(p.monto||0),0);
-    return sum + Math.max(0, total - pagado);
-  }, 0);
   stats.innerHTML = [
     {num:DB.pacientes.length, label:'Pacientes'},
     {num:citasHoy, label:'Citas hoy'},
-    {num:DB.presupuestos.length, label:'Presupuestos'},
-    {num:'$'+totalPendiente.toLocaleString('es-MX',{maximumFractionDigits:0}), label:'Saldo pendiente'}
-  ].map(s=>`<div class="stat-card"><div class="stat-num" style="font-size:${typeof s.num==='string'?'1.1rem':'1.8rem'}">${s.num}</div><div class="stat-label">${s.label}</div></div>`).join('');
+    {num:DB.presupuestos.length, label:'Presupuestos'}
+  ].map(s=>`<div class="stat-card"><div class="stat-num">${s.num}</div><div class="stat-label">${s.label}</div></div>`).join('');
   // Patient in focus: next upcoming appointment
   const ahora = new Date().toISOString().slice(0,16).replace('T',' ');
   const proxCita = DB.citas.filter(c=>c.fecha && c.fecha+' '+(c.hora||'00:00') >= ahora).sort((a,b)=>(a.fecha+a.hora).localeCompare(b.fecha+b.hora))[0];
@@ -2261,7 +2301,7 @@ function renderDashboard() {
       focusEl.innerHTML = `<div style="display:flex;align-items:center;gap:12px">
         <div style="background:var(--accent);color:#fff;border-radius:50%;width:42px;height:42px;display:flex;align-items:center;justify-content:center;font-size:1.3rem;flex-shrink:0">👤</div>
         <div><div style="font-weight:700;font-size:.95rem">${nombreFoco}</div><div style="font-size:.82rem;color:var(--ink2);margin-top:2px">📅 ${fechaFoco}</div><div style="font-size:.82rem;color:var(--ink2)">${proxCita.motivo||''}</div></div>
-        <button onclick="setPacienteActivo('${proxCita.pacienteId}')" style="margin-left:auto;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:7px 14px;cursor:pointer;font-size:.82rem;font-weight:700">Ver →</button>
+        <button onclick="irAPaciente('${proxCita.pacienteId}')" style="margin-left:auto;background:var(--accent);color:#fff;border:none;border-radius:10px;padding:7px 14px;cursor:pointer;font-size:.82rem;font-weight:700">Ver →</button>
       </div>`;
     } else {
       focusEl.innerHTML = '<p style="color:var(--ink2);font-size:.9rem;margin:0">Sin próximas citas agendadas</p>';
