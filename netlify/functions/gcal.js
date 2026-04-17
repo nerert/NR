@@ -303,6 +303,37 @@ exports.handler = async (event) => {
       return ok({ folderId: pacienteFolderId });
     }
 
+    // 11b. Listar archivos en carpeta de Drive (sin crear)
+    //     Query: action=drive-list-folder, pacienteNombre, carpeta (default "Pacientes")
+    //     Retorna: { files: [{id, name, mimeType, thumbnailLink}] }
+    if(action === 'drive-list-folder' && event.httpMethod === 'GET') {
+      const { pacienteNombre, carpeta } = event.queryStringParameters || {};
+      if(!pacienteNombre) return err('pacienteNombre requerido', 400);
+      const rootName = carpeta || 'Pacientes';
+      const escaped  = pacienteNombre.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      const escapedRoot = rootName.replace(/\\/g, '\\\\').replace(/'/g, "\\'");
+      // Find root folder
+      const rootList = await driveFetch(
+        `/files?q=${encodeURIComponent(`name='${escapedRoot}' and mimeType='application/vnd.google-apps.folder' and trashed=false`)}&fields=files(id)&spaces=drive`,
+        accessToken
+      );
+      if(!rootList.files?.length) return ok({ files: [] });
+      const rootId = rootList.files[0].id;
+      // Find patient subfolder
+      const subList = await driveFetch(
+        `/files?q=${encodeURIComponent(`name='${escaped}' and mimeType='application/vnd.google-apps.folder' and '${rootId}' in parents and trashed=false`)}&fields=files(id)&spaces=drive`,
+        accessToken
+      );
+      if(!subList.files?.length) return ok({ files: [] });
+      const subId = subList.files[0].id;
+      // List image files in patient subfolder
+      const fileList = await driveFetch(
+        `/files?q=${encodeURIComponent(`'${subId}' in parents and trashed=false`)}&fields=files(id,name,mimeType,thumbnailLink)&pageSize=100&spaces=drive`,
+        accessToken
+      );
+      return ok({ files: fileList.files || [] });
+    }
+
     // 11. Eliminar archivo de Drive
     if(action === 'drive-delete' && event.httpMethod === 'DELETE') {
       const fileId = event.queryStringParameters?.fileId;
