@@ -2501,7 +2501,7 @@ function renderDashboard() {
     dasHoy.innerHTML = citasDeHoy.length ? citasDeHoy.map(c=>{
       const pac = DB.pacientes.find(p=>p.id===c.pacienteId);
       const tel = pac?.tel ? pac.tel.replace(/\D/g,'') : null;
-      const wpp = buildWppUrl(tel, pac?.nombre||'', 'hoy', c.hora||'', c.motivo||'');
+      const wpp = buildWppUrl(tel, pac?.nombre||'', new Date().toISOString().slice(0,10), c.hora||'', c.motivo||'');
       return `<div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border)">
         <div style="background:var(--accent);color:#fff;border-radius:10px;padding:6px 12px;font-weight:800;font-size:.9rem;white-space:nowrap;min-width:52px;text-align:center">${c.hora||'--:--'}</div>
         <div style="flex:1">
@@ -3519,8 +3519,7 @@ async function gcalSyncCita(cita) {
   const tz = Intl.DateTimeFormat().resolvedOptions().timeZone;
   const event = {
     summary:     'Cita dental: ' + nombre,
-    description: [cita.motivo, cita.notas].filter(Boolean).join('
-'),
+    description: [cita.motivo, cita.notas].filter(Boolean).join('\n'),
     start: { dateTime: startDT.toISOString(), timeZone: tz },
     end:   { dateTime: endDT.toISOString(),   timeZone: tz },
     reminders: { useDefault: false, overrides: [{ method: 'popup', minutes: 60 }] }
