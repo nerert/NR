@@ -3488,7 +3488,11 @@ async function gcalLoadEventsHoy() {
     gcalSetStatus('Sincronizado — ' + items.length + ' evento' + (items.length !== 1 ? 's' : '') + ' hoy', 'ok');
   } catch(e) {
     console.error('[GCal] load events', e);
-    gcalSetStatus('Error al cargar eventos: ' + e.message, 'error');
+    if(/expired|revoked|invalid|401|unauthorized/i.test(e.message)) {
+      gcalSessionExpired();
+    } else {
+      gcalSetStatus('Error al cargar eventos: ' + e.message, 'error');
+    }
   }
 }
 
@@ -3548,8 +3552,12 @@ async function gcalSyncCita(cita) {
     gcalLoadEventsHoy();
   } catch(e) {
     console.error('[GCal] sync cita', e);
-    gcalSetStatus('Error: ' + e.message, 'error');
-    toast('❌ Error al sincronizar con Google Calendar');
+    if(/expired|revoked|invalid|401|unauthorized/i.test(e.message)) {
+      gcalSessionExpired();
+    } else {
+      gcalSetStatus('Error: ' + e.message, 'error');
+      toast('❌ Error al sincronizar con Google Calendar');
+    }
   }
 }
 
