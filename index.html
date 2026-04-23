@@ -2043,8 +2043,12 @@ async function driveAgregarArchivos(input) {
   } catch(e) {
     statusEl.style.display = 'none';
     input.value = '';
-    toast('❌ Error: ' + e.message);
     console.error('[Drive upload]', e);
+    if(/expired|revoked|invalid|401|unauthorized/i.test(e.message)) {
+      gcalSessionExpired();
+    } else {
+      toast('❌ Error al subir: ' + e.message);
+    }
   }
 }
 
