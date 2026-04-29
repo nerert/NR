@@ -3612,23 +3612,36 @@ function abrirEditorFoto(input) {
   driveAgregarArchivos(input);
 }
 
-function editarFotoDesdeGaleria(idx) {
+async function editarFotoDesdeGaleria(idx) {
   const f = _fotosActuales[idx];
   if(!f || !f.driveId) return;
   _editorExistingIdx = idx;
   _editorFile = null;
   _editorRotacion = 0;
-  const url = `https://drive.google.com/thumbnail?id=${f.driveId}&sz=w1200`;
-  const img = new Image();
-  img.crossOrigin = 'anonymous';
-  img.onload = () => { _editorImg = img; _editorDibujar(); openModal('modal-foto-editor'); };
-  img.onerror = () => {
-    const img2 = new Image();
-    img2.onload = () => { _editorImg = img2; _editorDibujar(); openModal('modal-foto-editor'); };
-    img2.onerror = () => toast('❌ No se pudo cargar la imagen');
-    img2.src = url;
-  };
-  img.src = url;
+  toast('⏳ Cargando imagen…');
+  try {
+    const accessToken = await driveGetToken();
+    const resp = await fetch(
+      `https://www.googleapis.com/drive/v3/files/${f.driveId}?alt=media`,
+      { headers: { Authorization: `Bearer ${accessToken}` } }
+    );
+    if(!resp.ok) throw new Error('No se pudo descargar la imagen');
+    const blob = await resp.blob();
+    const blobUrl = URL.createObjectURL(blob);
+    const img = new Image();
+    img.onload = () => {
+      URL.revokeObjectURL(blobUrl);
+      _editorImg = img;
+      _editorDibujar();
+      openModal('modal-foto-editor');
+    };
+    img.onerror = () => { URL.revokeObjectURL(blobUrl); toast('❌ No se pudo cargar la imagen'); };
+    img.src = blobUrl;
+  } catch(e) {
+    console.error('[editarFotoDesdeGaleria]', e);
+    if(/expired|revoked|invalid|401|unauthorized/i.test(e.message)) gcalSessionExpired();
+    else toast('❌ Error al cargar: ' + e.message);
+  }
 }
 
 function _editorDibujar() {
