@@ -1878,17 +1878,18 @@ async function cargarFotos() {
     archivosGrid.innerHTML = '<div style="display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:12px;margin-bottom:16px">'
       + _fotosActuales.map((f, i) => {
           const thumb = `<img src="https://drive.google.com/thumbnail?id=${f.driveId}&sz=w300" loading="lazy" style="width:100%;aspect-ratio:1;object-fit:cover;border-radius:8px 8px 0 0;display:block;cursor:pointer" onclick="abrirVisor(${i})">`;
-          const badge = f._src === 'firebase'
-            ? `<div style="position:absolute;top:4px;right:4px;display:flex;gap:3px">
-                <button onclick="editarNotaFoto('${pacId}','${f.driveId}')" title="Nota" style="background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">📝</button>
-                <button onclick="borrarArchivoDrive('${pacId}','${f.driveId}')" title="Eliminar" style="background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">🗑️</button>
-               </div>`
-            : `<span title="${f._src==='orto'?'Ortodoncia':'Drive'}" style="position:absolute;top:4px;right:4px;background:rgba(0,0,0,.45);color:#fff;border-radius:10px;padding:2px 5px;font-size:.65rem">${f._src==='orto'?'🦷':'📁'}</span>`;
+          const srcBadge = f._src!=='firebase' ? `<span title="${f._src==='orto'?'Ortodoncia':'Drive'}" style="position:absolute;top:4px;left:4px;background:rgba(0,0,0,.45);color:#fff;border-radius:10px;padding:2px 5px;font-size:.65rem">${f._src==='orto'?'🦷':'📁'}</span>` : '';
+          const badge = `<div style="position:absolute;top:4px;right:4px;display:flex;gap:3px">
+                <button onclick="editarFotoDesdeGaleria(${i})" title="Editar" style="background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">✏️</button>
+                ${f._src==='firebase' ? `<button onclick="editarNotaFoto('${pacId}','${f.driveId}')" title="Nota" style="background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">📝</button>
+                <button onclick="borrarArchivoDrive('${pacId}','${f.driveId}')" title="Eliminar" style="background:rgba(0,0,0,.45);color:#fff;border:none;border-radius:50%;width:26px;height:26px;cursor:pointer;font-size:.75rem;line-height:1">🗑️</button>` : ''}
+               </div>`;
           const notaHtml = f.nota ? `<p style="font-size:.68rem;color:var(--accent);font-style:italic;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:0 8px 5px">${f.nota}</p>` : '';
           return `<div style="position:relative;border-radius:10px;overflow:hidden;background:var(--surface);border:1.5px solid var(--border)">
             ${thumb}
             <p style="font-size:.72rem;color:var(--ink2);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;margin:0;padding:6px 8px 2px">${f.name||'foto'}</p>
             ${notaHtml}
+            ${srcBadge}
             ${badge}
           </div>`;
         }).join('')
@@ -3605,28 +3606,29 @@ async function gcalSyncAhora() {
 let _editorFile = null;
 let _editorRotacion = 0;
 let _editorImg = null;
+let _editorExistingIdx = -1;
 
 function abrirEditorFoto(input) {
-  const files = Array.from(input.files);
-  if(!files.length) return;
-  if(files.length > 1) {
-    driveAgregarArchivos(input);
-    return;
-  }
-  _editorFile = files[0];
+  driveAgregarArchivos(input);
+}
+
+function editarFotoDesdeGaleria(idx) {
+  const f = _fotosActuales[idx];
+  if(!f || !f.driveId) return;
+  _editorExistingIdx = idx;
+  _editorFile = null;
   _editorRotacion = 0;
-  const reader = new FileReader();
-  reader.onload = e => {
-    const img = new Image();
-    img.onload = () => {
-      _editorImg = img;
-      _editorDibujar();
-      openModal('modal-foto-editor');
-    };
-    img.src = e.target.result;
+  const url = `https://drive.google.com/thumbnail?id=${f.driveId}&sz=w1200`;
+  const img = new Image();
+  img.crossOrigin = 'anonymous';
+  img.onload = () => { _editorImg = img; _editorDibujar(); openModal('modal-foto-editor'); };
+  img.onerror = () => {
+    const img2 = new Image();
+    img2.onload = () => { _editorImg = img2; _editorDibujar(); openModal('modal-foto-editor'); };
+    img2.onerror = () => toast('❌ No se pudo cargar la imagen');
+    img2.src = url;
   };
-  reader.readAsDataURL(_editorFile);
-  input.value = '';
+  img.src = url;
 }
 
 function _editorDibujar() {
@@ -3738,42 +3740,52 @@ async function editorSubir() {
   const pacId = document.getElementById('select-paciente-fotos')?.value || pacienteActivo;
   if(!pacId) { toast('⚠️ Selecciona un paciente'); return; }
   if(!gcalReady) { toast('⚠️ Conecta Google para subir fotos'); return; }
-  // Si hay selección de recorte activa, aplicarla automáticamente antes de subir
   if(_cropMode && _cropRect && _cropRect.w >= 4 && _cropRect.h >= 4) {
     await editorAplicarRecorte();
   } else if(_cropMode) {
     editorCancelarRecorte();
   }
-  const canvas  = document.getElementById('editor-canvas');
+  const canvas   = document.getElementById('editor-canvas');
   const statusEl = document.getElementById('drive-upload-status');
   closeModal('modal-foto-editor');
   statusEl.style.display = 'block';
-  statusEl.textContent = '⏳ Subiendo foto…';
+  statusEl.textContent = '⏳ Guardando foto editada…';
   try {
     const blob = await new Promise(res => canvas.toBlob(res, 'image/jpeg', 0.92));
-    const nombre = (_editorFile?.name || 'foto.jpg').replace(/\.[^.]+$/, '') + '.jpg';
-    const file   = new File([blob], nombre, { type: 'image/jpeg' });
-    const folders     = await driveEnsurePacienteFolder(pacId);
-    const folderId    = folders.folderId;
+    const existingF = _editorExistingIdx >= 0 ? _fotosActuales[_editorExistingIdx] : null;
+    const nombre = existingF ? (existingF.name||'foto').replace(/\.[^.]+$/,'')+'_edit.jpg'
+                             : (_editorFile?.name||'foto.jpg').replace(/\.[^.]+$/,'')+'.jpg';
+    const file       = new File([blob], nombre, { type: 'image/jpeg' });
+    const folders    = await driveEnsurePacienteFolder(pacId);
+    const folderId   = folders.folderId;
     const accessToken = await driveGetToken();
-    const uploaded    = await driveUploadFile(file, folderId, accessToken);
+    const uploaded   = await driveUploadFile(file, folderId, accessToken);
     await driveMakePublic(uploaded.id, accessToken);
-    const viewUrl = `https://drive.google.com/file/d/${uploaded.id}/view`;
+    const viewUrl  = `https://drive.google.com/file/d/${uploaded.id}/view`;
     const docRef   = db.collection('archivos').doc(pacId);
-    const existing = await docRef.get();
-    const arData   = existing.exists ? existing.data() : {};
+    const snap     = await docRef.get();
+    const arData   = snap.exists ? snap.data() : {};
     const lista    = arData.fotos || [];
-    lista.push({ url: viewUrl, name: nombre, driveId: uploaded.id,
-                 mimeType: 'image/jpeg', subido: Date.now() });
+    if(existingF && existingF._src === 'firebase') {
+      // Replace existing firebase record
+      const fi = lista.findIndex(x => x.driveId === existingF.driveId);
+      if(fi >= 0) lista[fi] = { ...lista[fi], url: viewUrl, driveId: uploaded.id, name: nombre, subido: Date.now() };
+      else lista.push({ url: viewUrl, name: nombre, driveId: uploaded.id, mimeType: 'image/jpeg', subido: Date.now() });
+    } else {
+      lista.push({ url: viewUrl, name: nombre, driveId: uploaded.id, mimeType: 'image/jpeg', subido: Date.now() });
+    }
     arData.fotos = lista;
     await docRef.set(arData);
+    _editorExistingIdx = -1;
     statusEl.style.display = 'none';
     cargarFotos();
     toast('✅ Foto guardada en Drive');
   } catch(e) {
+    _editorExistingIdx = -1;
     statusEl.style.display = 'none';
-    toast('❌ Error: ' + e.message);
     console.error('[editorSubir]', e);
+    if(/expired|revoked|invalid|401|unauthorized/i.test(e.message)) gcalSessionExpired();
+    else toast('❌ Error: ' + e.message);
   }
 }
 
