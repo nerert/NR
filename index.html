@@ -2271,6 +2271,7 @@ async function guardarPago() {
   const monto = parseFloat(document.getElementById('pago-monto').value) || 0;
   if(!monto) { toast('⚠️ Ingresa el monto'); return; }
   const presupuestoId = document.getElementById('pago-presup-sel')?.value || '';
+  if(!presupuestoId) { toast('⚠️ Selecciona un presupuesto'); return; }
   const data = {
     pacienteId: pacId,
     presupuestoId,
@@ -3608,6 +3609,10 @@ let _editorImg = null;
 function abrirEditorFoto(input) {
   const files = Array.from(input.files);
   if(!files.length) return;
+  if(files.length > 1) {
+    driveAgregarArchivos(input);
+    return;
+  }
   _editorFile = files[0];
   _editorRotacion = 0;
   const reader = new FileReader();
