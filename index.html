@@ -2020,6 +2020,7 @@ async function driveAgregarArchivos(input) {
   try {
     const folders     = await driveEnsurePacienteFolder(pacId);
     const folderId    = folders.folderId;
+    if(!folderId) throw new Error('No se pudo obtener la carpeta de Drive');
     const accessToken = await driveGetToken();
     let subidos = 0;
     for(const file of files) {
@@ -3620,23 +3621,18 @@ async function editarFotoDesdeGaleria(idx) {
   _editorRotacion = 0;
   toast('⏳ Cargando imagen…');
   try {
-    const accessToken = await driveGetToken();
-    const resp = await fetch(
-      `https://www.googleapis.com/drive/v3/files/${f.driveId}?alt=media`,
-      { headers: { Authorization: `Bearer ${accessToken}` } }
-    );
-    if(!resp.ok) throw new Error('No se pudo descargar la imagen');
-    const blob = await resp.blob();
-    const blobUrl = URL.createObjectURL(blob);
+    const resp = await fetch(`/.netlify/functions/gcal?action=drive-image&fileId=${f.driveId}`);
+    if(!resp.ok) throw new Error(resp.statusText);
+    const { base64, mimeType } = await resp.json();
+    if(!base64) throw new Error('Sin datos de imagen');
     const img = new Image();
     img.onload = () => {
-      URL.revokeObjectURL(blobUrl);
       _editorImg = img;
       _editorDibujar();
       openModal('modal-foto-editor');
     };
-    img.onerror = () => { URL.revokeObjectURL(blobUrl); toast('❌ No se pudo cargar la imagen'); };
-    img.src = blobUrl;
+    img.onerror = () => toast('❌ No se pudo cargar la imagen');
+    img.src = `data:${mimeType || 'image/jpeg'};base64,${base64}`;
   } catch(e) {
     console.error('[editarFotoDesdeGaleria]', e);
     if(/expired|revoked|invalid|401|unauthorized/i.test(e.message)) gcalSessionExpired();
@@ -3771,6 +3767,7 @@ async function editorSubir() {
     const file       = new File([blob], nombre, { type: 'image/jpeg' });
     const folders    = await driveEnsurePacienteFolder(pacId);
     const folderId   = folders.folderId;
+    if(!folderId) throw new Error('No se pudo obtener la carpeta de Drive');
     const accessToken = await driveGetToken();
     const uploaded   = await driveUploadFile(file, folderId, accessToken);
     await driveMakePublic(uploaded.id, accessToken);
