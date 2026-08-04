@@ -2494,11 +2494,17 @@ async function exportarExpediente(pacId) {
       doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(176,120,152);
       doc.text('Presupuestos',14,y+6);y+=10;doc.setTextColor(30,30,30);
       presups.forEach(pr=>{
-        if(y>240){doc.addPage();y=20;}
+        if(y>245){
+          doc.addPage();
+          doc.setFillColor(214,168,196);doc.rect(0,0,210,10,'F');
+          doc.setTextColor(255,255,255);doc.setFontSize(8);doc.setFont('helvetica','bold');
+          doc.text('Consultorio Dental  |  Dra. Karen Lopez Venzor  |  Presupuestos (continuacion)',105,7,{align:'center'});
+          doc.setTextColor(30,30,30);
+          y=18;
+        }
         doc.setFont('helvetica','normal');doc.setFontSize(8);doc.setTextColor(100,100,100);
         doc.text(`Fecha: ${pr.fecha}`,14,y);y+=5;
         const {subtotal,descItems,descGlobal,descMonto,total,descV,descT}=calcDescuento(pr);
-        // Same format as exportarPresupuestoPDF
         const bodyRows = pr.items.map((it,idx)=>{
           const desc = it.descuento||0;
           const final = it.costo-(it.costo*desc/100);
@@ -2516,11 +2522,13 @@ async function exportarExpediente(pacId) {
           head:[['#','Procedimiento','Precio','Desc.','Total']],
           body:bodyRows,
           foot:footRows,
+          showFoot:'lastPage', showHead:'everyPage',
           styles:{fontSize:8},
           columnStyles:{0:{cellWidth:8,halign:'center'},1:{cellWidth:85},2:{halign:'right',cellWidth:24},3:{halign:'center',cellWidth:14},4:{halign:'right',cellWidth:24}},
-          margin:{left:14,right:14},tableWidth:'auto',
+          margin:{left:14,right:14,bottom:30},tableWidth:'auto',
           headStyles:{fillColor:[214,168,196]},
-          footStyles:{fillColor:[214,168,196],textColor:[255,255,255],fontStyle:'bold'}
+          footStyles:{fillColor:[214,168,196],textColor:[255,255,255],fontStyle:'bold'},
+          didDrawPage:(data)=>{ if(data.pageNumber>1){doc.setFillColor(214,168,196);doc.rect(0,0,210,10,'F');doc.setTextColor(255,255,255);doc.setFontSize(8);doc.setFont('helvetica','bold');doc.text('Consultorio Dental  |  Dra. Karen Lopez Venzor  |  Presupuestos (continuacion)',105,7,{align:'center'});doc.setTextColor(30,30,30);}}
         });
         y=doc.lastAutoTable.finalY+8;
       });
