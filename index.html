@@ -2560,28 +2560,24 @@ async function exportarExpediente(pacId) {
   if(incPagos) {
     const todosPagos = DB.pagos.filter(p => p.pacienteId === pacId);
     const presupsPac = DB.presupuestos.filter(p => p.pacienteId === pacId);
-    if(todosPagos.length || presupsPac.length) {
+    // Solo mostrar presupuestos que EXISTEN y tienen pagos
+    const presupIdsConPagos = [...new Set(todosPagos.map(p=>p.presupuestoId).filter(Boolean))]
+      .filter(id => presupsPac.some(p=>p.id===id));
+    if(presupIdsConPagos.length) {
       doc.addPage(); y = pdfHeader(doc, 'Estado de Cuenta', pac); paginasUsadas++;
 
-      // Group pagos by presupuesto
-      const presupIds = [...new Set(todosPagos.map(p=>p.presupuestoId).filter(Boolean))];
-      const pagosSinPresup = todosPagos.filter(p=>!p.presupuestoId);
-
-      // Show each presupuesto group
-      for(const presupId of presupIds) {
+      for(const presupId of presupIdsConPagos) {
         const pr = presupsPac.find(p=>p.id===presupId);
         const pagosPr = todosPagos.filter(p=>p.presupuestoId===presupId).sort((a,b)=>(b.fecha||'').localeCompare(a.fecha||''));
-        const {total:totalPresup} = pr ? calcDescuento(pr) : {total:0};
+        const {total:totalPresup} = calcDescuento(pr);
         const totalPagado = pagosPr.reduce((s,p)=>s+(p.monto||0),0);
         const saldo = Math.max(0, totalPresup - totalPagado);
         if(y > 220) { doc.addPage(); y = pdfHeader(doc,'Estado de Cuenta',pac); }
-        // Presupuesto label with totals inline (no separate summary table)
         doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(176,120,152);
-        doc.text(`Presupuesto: ${pr?.fecha||'—'}`,14,y);
+        doc.text(`Presupuesto: ${pr.fecha}`,14,y);
         doc.setFont('helvetica','normal');doc.setTextColor(80,80,80);
         doc.text(`Presupuestado: $${totalPresup.toLocaleString()}   Pagado: $${totalPagado.toLocaleString()}   Saldo pendiente: $${saldo.toLocaleString()}`,14,y+5);
         y+=12;
-        // Historial
         doc.autoTable({
           startY:y,
           head:[['Concepto','Monto','Fecha','Estado']],
@@ -2596,25 +2592,6 @@ async function exportarExpediente(pacId) {
           didDrawPage:(data)=>{ if(data.pageNumber>1){doc.setFillColor(214,168,196);doc.rect(0,0,210,10,'F');doc.setTextColor(255,255,255);doc.setFontSize(8);doc.setFont('helvetica','bold');doc.text(`Consultorio Dental  |  Dra. Karen Lopez Venzor  |  Estado de Cuenta (continuacion)`,105,7,{align:'center'});doc.setTextColor(30,30,30);}}
         });
         y = doc.lastAutoTable.finalY + 10;
-      }
-
-      // Pagos sin presupuesto
-      if(pagosSinPresup.length) {
-        const totalSP = pagosSinPresup.reduce((s,p)=>s+(p.monto||0),0);
-        doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(176,120,152);
-        doc.text('Otros pagos',14,y);y+=6;
-        doc.autoTable({
-          startY:y,
-          head:[['Concepto','Monto','Fecha','Estado']],
-          body:pagosSinPresup.map(p=>[p.concepto||'—','$'+(p.monto||0).toLocaleString(),p.fecha||'—',p.estado||'—']),
-          foot:[['Total','$'+totalSP.toLocaleString(),'','']],
-          styles:{fontSize:8},
-          headStyles:{fillColor:[214,168,196]},
-          footStyles:{fillColor:[214,168,196],textColor:[255,255,255],fontStyle:'bold'},
-          columnStyles:{1:{halign:'right'}},
-          margin:{left:14,right:14}
-        });
-        y = doc.lastAutoTable.finalY + 8;
       }
     }
   }
