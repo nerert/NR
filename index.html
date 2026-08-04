@@ -2491,8 +2491,7 @@ async function exportarExpediente(pacId) {
     const presups = DB.presupuestos.filter(p => p.pacienteId===pacId && (presupSelId==='todos' || p.id===presupSelId));
     if(presups.length){
       doc.addPage(); y = pdfHeader(doc, 'Presupuestos', pac); paginasUsadas++;
-      doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(176,120,152);
-      doc.text('Presupuestos',14,y+6);y+=10;doc.setTextColor(30,30,30);
+      doc.setTextColor(30,30,30);
       presups.forEach(pr=>{
         if(y>245){
           doc.addPage();
@@ -2563,8 +2562,6 @@ async function exportarExpediente(pacId) {
     const presupsPac = DB.presupuestos.filter(p => p.pacienteId === pacId);
     if(todosPagos.length || presupsPac.length) {
       doc.addPage(); y = pdfHeader(doc, 'Estado de Cuenta', pac); paginasUsadas++;
-      doc.setFont('helvetica','bold');doc.setFontSize(11);doc.setTextColor(176,120,152);
-      doc.text('Estado de Cuenta',14,y+6);y+=12;
 
       // Group pagos by presupuesto
       const presupIds = [...new Set(todosPagos.map(p=>p.presupuestoId).filter(Boolean))];
@@ -2578,23 +2575,13 @@ async function exportarExpediente(pacId) {
         const totalPagado = pagosPr.reduce((s,p)=>s+(p.monto||0),0);
         const saldo = Math.max(0, totalPresup - totalPagado);
         if(y > 220) { doc.addPage(); y = pdfHeader(doc,'Estado de Cuenta',pac); }
-        // Presupuesto label
+        // Presupuesto label with totals inline (no separate summary table)
         doc.setFont('helvetica','bold');doc.setFontSize(9);doc.setTextColor(176,120,152);
-        doc.text(`Presupuesto: ${pr?.fecha||'—'}`,14,y);y+=6;
-        // Summary table
-        doc.autoTable({
-          startY:y,
-          head:[['Presupuestado','Total pagado','Saldo pendiente']],
-          body:[['$'+totalPresup.toLocaleString(),'$'+totalPagado.toLocaleString(),'$'+saldo.toLocaleString()]],
-          styles:{fontSize:9,fontStyle:'bold',halign:'center'},
-          headStyles:{fillColor:[214,168,196],halign:'center'},
-          bodyStyles:{halign:'center'},
-          margin:{left:14,right:14}
-        });
-        y = doc.lastAutoTable.finalY + 4;
+        doc.text(`Presupuesto: ${pr?.fecha||'—'}`,14,y);
+        doc.setFont('helvetica','normal');doc.setTextColor(80,80,80);
+        doc.text(`Presupuestado: $${totalPresup.toLocaleString()}   Pagado: $${totalPagado.toLocaleString()}   Saldo pendiente: $${saldo.toLocaleString()}`,14,y+5);
+        y+=12;
         // Historial
-        doc.setFont('helvetica','bold');doc.setFontSize(8.5);doc.setTextColor(30,30,30);
-        doc.text('Historial de abonos',14,y+4);y+=8;
         doc.autoTable({
           startY:y,
           head:[['Concepto','Monto','Fecha','Estado']],
